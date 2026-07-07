@@ -406,14 +406,14 @@
     "archived_at": null,
     "created_at": "2026-07-07T12:56:23.906139+00:00",
     "created_by": null,
-    "last_patched_at": "2026-07-07T12:57:05.508918+00:00",
-    "last_used_at": "2026-07-07T12:56:23.913497+00:00",
-    "last_viewed_at": "2026-07-07T12:56:23.906181+00:00",
-    "patch_count": 2,
+    "last_patched_at": "2026-07-07T13:14:55.061050+00:00",
+    "last_used_at": "2026-07-07T13:20:44.065693+00:00",
+    "last_viewed_at": "2026-07-07T13:20:44.058623+00:00",
+    "patch_count": 3,
     "pinned": false,
     "state": "active",
-    "use_count": 1,
-    "view_count": 1
+    "use_count": 3,
+    "view_count": 3
   },
   "gif-search": {
     "archived_at": null,
