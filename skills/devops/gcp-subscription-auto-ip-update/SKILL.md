@@ -30,13 +30,18 @@ GCP IP 变化
 |------|------|
 | `/root/.hermes/scripts/gcp-ip-check.sh` | IP 检测入口，cron 每30分钟触发 |
 | `/root/.hermes/scripts/push-sub-to-github.py` | 生成 YAML → 推送 GitHub + 写本地副本 |
+| `/root/.hermes/scripts/cf-update-dns.py` | Cloudflare DNS A 记录 DDNS 更新 |
 | `/root/.hermes/scripts/subscription-server.py` | 本机 HTTP 服务，serve custom-sub.yaml |
+| `/root/.hermes/scripts/hermes-skills-backup.sh` | 每天同步 skills/ 到 GitHub toolbox 仓库 |
 | `/etc/systemd/system/subscription-server.service` | HTTP 服务的 systemd 单元 |
 | `/root/.github_token.txt` | GitHub PAT（推私有仓库用） |
+| `/root/.cloudflare_token.txt` | Cloudflare API Token（DNS:Edit 权限） |
+| `/etc/cron.d/gcp-ip-check` | 30 分钟 cron（IP 检测） |
+| `/etc/cron.d/hermes-skills-backup` | 每天 10:00 UTC cron（skills 备份） |
 | `/etc/s-box/custom-sub.yaml` | Stash 实际拉取的订阅文件（override 格式） |
 | `/etc/s-box/clmi.yaml` | 完整 Clash Meta 配置 |
 | `/etc/s-box/jhsub.txt` | V2Ray share link 格式订阅 |
-| `/etc/cron.d/gcp-ip-check` | 30分钟定时器 |
+| `/root/toolbox/` | 克隆的 toolbox 仓库本地副本 |
 
 ## IP 变更时的完整流程
 
