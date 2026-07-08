@@ -8,7 +8,7 @@
 ## Active Tunnels (WSL side)
 Two persistent SSH tunnels via `gcloud compute ssh --tunnel-through-iap`:
 
-### Forward Tunnel (WSL→GCP)
+### Forward Tunnel (WSL→GCP) — ✅ MAY BE ACTIVE
 ```bash
 gcloud compute ssh <instance-name> --zone <zone> \
   --tunnel-through-iap -- -L 8645:localhost:8645 -N
@@ -16,13 +16,20 @@ gcloud compute ssh <instance-name> --zone <zone> \
 Maps GCP's webhook port 8645 to WSL's localhost:8645.  
 Used for: WSL Hermes POSTing tasks to GCP Hermes.
 
-### Reverse Tunnel (GCP←WSL)
+### Reverse Tunnel (GCP←WSL) — ❓ CHECK IF RUNNING
 ```bash
 gcloud compute ssh <instance-name> --zone <zone> \
   --tunnel-through-iap -- -R 8644:localhost:8644 -N
 ```
 Maps WSL's webhook port 8644 to GCP's localhost:8644.  
 Used for: GCP Hermes POSTing tasks to WSL Hermes.
+
+**Check from GCP whether it's alive:**
+```bash
+ss -tlnp | grep 8644
+listen on 127.0.0.1:8644? → ✅ tunnel is up
+no output?                → ❌ tunnel is down; GCP cannot reach WSL
+```
 
 ## Webhook Routes
 

@@ -166,13 +166,61 @@ After changing: restart the gateway. New sessions use the updated length; existi
 
 ### Architecture
 
-Connect two Hermes instances (e.g. GCP + WSL) via gcloud IAP tunnels and Hermes webhooks — no public ports required.
+Connect two Hermes instances (e.g. GCP + WSL) via webhooks — one instance receives tasks from the other, processes them, and optionally delivers the response back. Two direction patterns:
 
 ```
-WSL Hermes  ◄──IAP Tunnels──►  GCP Hermes
-(WeChat)    :8645 fwd→GCP      (Telegram)
-            :8644 rev←WSL
+WSL Hermes  ──SSH reverse tunnel──►  GCP Hermes
+(WeChat)    :8645 (listener)        (Telegram)
+            :8644 ←reverse tunnel   :8644 (listener for WSL→GCP)
 ```
+
+### Method A — SSH Reverse Tunnel (gcloud-free)
+
+When both machines can SSH but gcloud CLI isn't available or IAP isn't configured:
+
+**Forward direction (WSL → GCP):** WSL sends HTTP POST to GCP's public webhook port. No tunnel needed — GCP has a public IP.
+
+**Reverse direction (GCP → WSL):** WSL connects to GCP via SSH and sets up a reverse port forward, exposing WSL's local webhook at GCP's localhost:
+
+```bash
+# On WSL (runs in background):
+ssh -R 8644:localhost:8644 root@<GCP_PUBLIC_IP> -N &
+```
+
+After setup, GCP can POST to `localhost:8644/webhooks/<route>` and reach WSL's Hermes.
+
+**Verify the tunnel from GCP side:**
+```bash
+ss -tlnp | grep 8644
+# Expected: LISTEN 127.0.0.1:8644 — tunnel is alive
+# If not present, tunnel has dropped (SSH process died / network blip)
+```
+
+**No SSH reverse tunnel → no GCP→WSL direction.** Without it, GCP cannot initiate contact. WSL must establish the `ssh -R` connection. If it drops, GCP-side `curl` to `localhost:8644` gets `Connection refused`.
+
+### Tunnel Health Diagnostics
+
+**Problem:** GCP can't reach WSL — WSL reversed tunnel dropped.
+
+**Check from GCP:**
+```bash
+# 1. Is the tunnel port listening?
+ss -tlnp | grep 8644
+# If no output, tunnel is down
+
+# 2. Does the sshd process still exist?
+ps aux | grep "8644" | grep sshd
+# If no output, tunnel process died
+
+# 3. Direct connection test
+curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 http://localhost:8644/
+# Expected: 200-404 (GCP Hermes or tunnel responds)
+# Connection refused = no listener on 8644
+```
+
+**Recovery:** WSL must re-run `ssh -R 8644:localhost:8644 ...`. Consider a cron job on WSL that pings GCP periodically and restarts the tunnel if it's down.
+
+### Method B — IAP Tunnel (gcloud)
 
 ### Tunnel Setup
 
@@ -522,11 +570,15 @@ hermes send --to weixin "MEDIA:/path/to/image.jpg"
 - **iLink rate limits aggressive.** 30s+ cooldown per user on send failure (errcode -2). The rate-limit circuit breaker opens at 1 hit in 30s by default.
 - **Can't join ordinary WeChat groups.** iLink bot identity (`...@im.bot`) is designed for DMs, not group chat. Group events rarely arrive regardless of `WEIXIN_GROUP_POLICY`.
 - **QR code expires.** The login flow auto-refreshes up to 3 times. If all expire, rerun `hermes gateway setup`.
+- **Session expiry blocks all sends.** After ~9 hours of inactivity, iLink returns errcode=-14 (session expired). The circuit breaker shows "rate limited" (errcode=-2 mapped) but the root cause is the long-poll session having timed out server-side. Resetting the circuit breaker alone won't fix it — the gateway's long-poll loop must reconnect.
+- **Gateway restart is BLOCKED from inside the gateway process.** Running `systemctl restart hermes-gateway` or `hermes gateway restart` from a terminal command that lives inside the gateway's process tree will be blocked with "SIGTERM propagates to child processes". The restart MUST come from a separate, independent shell.
+- **`hermes send` blocked from cron can mask the problem.** When a cron job triggers `hermes send --to weixin` and gets "rate limited", the exit code is 1. The cron agent sees a "failed to send" but can't fix it because it can't restart the gateway. Cron-driven WeChat messaging sessions should include a preliminary diagnostic step and report the failure clearly rather than retry indefinitely.
 - **Pairing code may not deliver.** iLink rate limits can block the pairing code reply. Use the manual approval workaround (Section 6).
 - **Gateway restart sends startup notifications.** On restart, every connected platform gets a startup ping. If WeChat is rate-limited, that notification fails first. Wait for cooldown, then `hermes gateway restart`.
 - **Media delivery** uses AES-128-ECB encrypted CDN. Image/video/document attachments work but require the `cryptography` package.
 - **`hermes send` returns quickly** but may timeout (exit 124) waiting for iLink delivery confirmation. The message was sent — check gateway logs for `Sending response` to confirm.
 - **Session recipe available:** See `references/weixin-cron-messaging-recipe.md` for a complete social check-in cron job setup with prompt template and timezone mapping.
+- **Session expiry troubleshooting:** See `references/weixin-session-expiry-troubleshoot.md` for diagnosing and recovering from persistent "rate limited" errors caused by iLink server-side session expiry (errcode=-14).
 
 ## 9. Proactive Gateway Messaging (Cron + hermes send)
 
@@ -720,7 +772,137 @@ Telegram (User B): "帮我查一下服务器日志"
 → Agent: work mode, run commands
 ```
 
-## 12. Gateway Connectivity Diagnostics
+## 13. QQ Bot Gateway Setup
+
+Connect Hermes to QQ via the Official QQ Bot API (v2).
+
+### Architecture
+
+The QQ Bot adapter uses the Official QQ Bot API to:
+- Receive messages via a persistent WebSocket connection to the QQ Gateway (`wss://api.sgroup.qq.com/websocket`)
+- Send text and markdown replies via the REST API
+- Download and process images, voice messages, and file attachments
+
+### Prerequisites
+
+1. **QQ Bot Application** — Register at [q.qq.com](https://q.qq.com):
+   - Create a new application → note **App ID** and **App Secret**
+   - Enable the required intents: C2C messages, Group @-messages, Guild messages
+   - Configure the bot in sandbox mode for testing, or publish for production
+
+2. **Dependencies** — The adapter requires `aiohttp` and `httpx`:
+   ```bash
+   /usr/local/lib/hermes-agent/venv/bin/pip install aiohttp httpx
+   ```
+
+### Configuration
+
+#### Interactive Setup
+
+```bash
+hermes gateway setup
+```
+
+Select QQ Bot from the platform list and follow the prompts.
+
+#### Manual `.env` Configuration
+
+```bash
+cat >> /root/.hermes/.env << 'ENVEOF'
+
+# QQ Bot
+QQ_APP_ID=your-app-id
+QQ_CLIENT_SECRET=your-app-secret
+QQ_ALLOW_ALL_USERS=true
+ENVEOF
+```
+
+| Env Var | Description | Default |
+|---------|-------------|---------|
+| `QQ_APP_ID` | QQ Bot App ID (required) | — |
+| `QQ_CLIENT_SECRET` | QQ Bot App Secret (required) | — |
+| `QQ_ALLOW_ALL_USERS` | Allow all DMs | `false` |
+| `QQ_ALLOWED_USERS` | Comma-separated user OpenIDs for DM access | open (all users) |
+| `QQ_GROUP_ALLOWED_USERS` | Comma-separated group OpenIDs for group access | — |
+| `QQBOT_HOME_CHANNEL` | OpenID for cron/notification delivery | — |
+
+#### `config.yaml` Platform Block
+
+```yaml
+platforms:
+  qqbot:
+    enabled: true
+    extra:
+      dm_policy: "open"          # open | allowlist | disabled
+      group_policy: "open"       # open | allowlist | disabled
+      markdown_support: false    # enable QQ markdown (msg_type 2)
+```
+
+The `platform_toolsets.qqbot` key should already contain `["hermes-qqbot"]` — this is the default in modern Hermes configs. Verify with `grep "qqbot" ~/.hermes/config.yaml`.
+
+### Adding to an Existing Gateway (⏫ Adding, not replacing)
+
+When adding QQ Bot alongside already-running Telegram + WeChat:
+
+1. Add `.env` vars (no need to touch existing ones)
+2. Add `platforms.qqbot` config block
+3. Restart gateway: `sudo systemctl restart hermes-gateway`
+4. The existing platforms stay connected — only the new one joins
+
+### Known Bug: `is_reconnect` Keyword Argument
+
+**Symptom on startup:**
+```
+ERROR gateway.run: ✗ qqbot error: QQAdapter.connect() got an unexpected keyword argument 'is_reconnect'
+```
+
+**Root cause:** The `BasePlatformAdapter.connect()` base class signature uses `async def connect(self, *, is_reconnect: bool = False) -> bool:`, but `QQAdapter.connect()` omitted the `is_reconnect` parameter entirely.
+
+**Fix — edit `/usr/local/lib/hermes-agent/gateway/platforms/qqbot/adapter.py`:**
+
+```python
+# Before:
+    async def connect(self) -> bool:
+
+# After:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+```
+
+**⚠️ This fix will be overwritten on Hermes updates.** The QQ Bot adapter is a 3rd-party-quality plugin inside the Hermes source tree. After `hermes update`, check if the `is_reconnect` keyword is still present.
+
+### Verification
+
+**Check gateway logs for successful connection:**
+```bash
+grep -i "qqbot" /root/.hermes/logs/gateway.log
+```
+
+Expected log sequence (all 6 lines should appear):
+```
+INFO gateway.run: Connecting to qqbot...
+INFO gateway.platforms.qqbot.adapter: [QQBot:{app_id}] Access token refreshed, expires in {N}s
+INFO gateway.platforms.qqbot.adapter: [QQBot:{app_id}] Gateway URL: wss://api.sgroup.qq.com/websocket
+INFO gateway.platforms.qqbot.adapter: [QQBot:{app_id}] WebSocket connected to wss://api.sgroup.qq.com/websocket
+INFO gateway.platforms.qqbot.adapter: [QQBot:{app_id}] Connected
+INFO gateway.platforms.qqbot.adapter: [QQBot:{app_id}] Ready, session_id={uuid}
+INFO gateway.run: ✓ qqbot connected
+```
+
+**Check all platforms are running:**
+```bash
+grep "Gateway running with" /root/.hermes/logs/gateway.log
+# Expected: "Gateway running with 4 platform(s)" (webhook + telegram + weixin + qqbot)
+```
+
+### Pitfalls
+
+- **Token in terminal gets redacted** — Use Python string assembly to write `QQ_CLIENT_SECRET` to `.env`, or use `hermes gateway setup` interactive mode. The `digits:alphanumeric` pattern doesn't apply to QQ secrets, so direct `cat >> .env` usually works.
+- **YAML indentation matters** — The `platforms.qqbot` block must be at the same indent level as `platforms.webhook`. Use `yaml.safe_load` + `yaml.dump` in Python to avoid structural corruption from shell appends.
+- **Gateway restart disrupts nothing** — Existing platform connections (Telegram, WeChat) stay stable. Only new QQ Bot joins.
+- **Bug re-appears after `hermes update`** — The `is_reconnect` keyword fix in `adapter.py` is in the installed source tree, not in config. Every `hermes update` replaces the entire `gateway/` directory. After updating, grep for the fix and re-apply if missing.
+- **Sandbox vs production** — A new QQ Bot app starts in sandbox mode. It can only receive messages from QQ's sandbox test channel until published. If the bot connects but receives no messages, check if it's published at q.qq.com.
+
+## 12. Gateway Connectivity Diagnostics (renumbered from previous 12)
 
 When a messaging platform (Telegram, WeChat) shows as "configured" but won't connect or goes silent:
 

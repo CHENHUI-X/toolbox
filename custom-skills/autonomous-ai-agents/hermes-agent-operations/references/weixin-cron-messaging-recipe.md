@@ -37,3 +37,27 @@ Delivery: local (agent runs in background, sends via hermes send)
 - **Variety:** Rotates between styles each run; no repeated content
 - **CST timezone:** Server is UTC, so CST 9/14/20 = UTC 1/6/12
 - **hermes send timeout:** Exit code 124 is normal — the tool exits before iLink confirms delivery. Check gateway logs for actual delivery.
+
+## Pitfalls & Recovery
+
+### "Rate limited" on every attempt
+
+If `hermes send --to weixin` repeatedly returns "iLink sendmessage rate limited" despite no recent activity:
+
+1. **Check gateway recency:** `grep -E "inbound from=|response ready.*weixin" ~/.hermes/logs/gateway.log | tail -5`
+   - If entries are >1 hour old, the iLink server session has expired (errcode=-14)
+2. **Do NOT retry indefinitely** — server-side session expiry won't resolve without a gateway restart
+3. **Report clearly:** state that the Weixin iLink session has expired and a gateway restart is needed
+4. **Gateway restart is blocked from inside the gateway process** — the cron agent cannot fix this. The user must run `hermes gateway restart` or `sudo systemctl restart hermes-gateway` from an external terminal.
+
+### Best practice: diagnostic preamble
+
+Cron job prompts for WeChat messaging should include a preliminary diagnostic step before the first send attempt:
+
+```
+Before sending, check if Weixin is actually connected:
+1. Run: grep -c "✓ weixin connected" ~/.hermes/logs/gateway.log
+2. If no match for today, Weixin may be disconnected — attempt send once and report failure clearly
+```
+
+This prevents the agent from entering an infinite retry loop on a stale session.

@@ -32,7 +32,7 @@ GCP IP 变化
 | `/root/.hermes/scripts/push-sub-to-github.py` | 生成 YAML → 推送 GitHub + 写本地副本 |
 | `/root/.hermes/scripts/cf-update-dns.py` | Cloudflare DNS A 记录 DDNS 更新 |
 | `/root/.hermes/scripts/subscription-server.py` | 本机 HTTP 服务，serve custom-sub.yaml |
-| `/root/.hermes/scripts/hermes-skills-backup.sh` | 每天同步 skills/ 到 GitHub toolbox 仓库 |
+| `/root/.hermes/scripts/hermes-skills-backup.py` | Python 脚本 — 分类备份自定义/自带 skill |
 | `/etc/systemd/system/subscription-server.service` | HTTP 服务的 systemd 单元 |
 | `/root/.github_token.txt` | GitHub PAT（推私有仓库用） |
 | `/root/.cloudflare_token.txt` | Cloudflare API Token（DNS:Edit 权限） |
@@ -145,6 +145,7 @@ journalctl -u subscription-server.service --no-pager -n 20
 ## 注意
 
 - **token 安全问题**：`/root/.github_token.txt` 中的 PAT 涉及写入权限，注意文件权限
+- **GitHub PAT auth failure** — when GitHub API returns 401 `Bad credentials` even though the token was correctly generated, the most common causes (in order): (1) token was created for a different GitHub account, (2) fine-grained token permissions didn't include `Contents: Read and write`, (3) token needs SSO authorization. Classic tokens (`ghp_...`) with `repo` scope are more reliable than fine-grained tokens (`github_pat_...`) for automation. To test: `curl -u "username:token" https://api.github.com/user` — if 200 but write returns 404, it's a permission issue.
 - clmi.yaml 只有 VLESS 节点的 server 是动态 IP，其他 4 个节点用 DDNS 域名（google.cloud.eosphor.dpdns.org）固定不变
 - jhsub.txt 中只有 vless:// 链接包含实际 IP，其他协议用域名
 - cron 每 30 分钟跑一次，IP 不变时完全静默
@@ -156,15 +157,23 @@ The `hermes-skills-backup.sh` script syncs the entire `~/.hermes/skills/` direct
 
 ### Skills Backup Workflow
 
+Skills are synced to `CHENHUI-X/toolbox` in two directories:
+- **custom-skills/** — skills created by the user or agent (not in Hermes bundle)
+- **official-skills/** — built-in skills shipped with Hermes
+
+The split is determined by comparing against `.bundled_manifest` in the skills directory.
+
 ```bash
-# Script: /root/.hermes/scripts/hermes-skills-backup.sh
+# Script: /root/.hermes/scripts/hermes-skills-backup.py (Python, called by .sh wrapper)
 # Cron:   /etc/cron.d/hermes-skills-backup (daily at 10:00 CST = 02:00 UTC)
 
 # What it does:
-# 1. Clones the toolbox repo (or pulls latest) to /home/projects/toolbox/
-# 2. Rsyncs ~/.hermes/skills/ → toolbox/skills/ (with --delete to mirror deletions)
-# 3. If there are changes, commits and pushes to GitHub
-# 4. If nothing changed, exits silently
+# 1. Reads .bundled_manifest to identify built-in skills
+# 2. Clones/pulls toolbox repo to /home/projects/toolbox/
+# 3. Copies custom skills → toolbox/custom-skills/ (by category)
+# 4. Copies official skills → toolbox/official-skills/ (by category)
+# 5. If there are changes, commits and pushes
+# 6. If nothing changed, exits silently
 ```
 
 The cron entry is:
