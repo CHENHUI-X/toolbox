@@ -63,6 +63,13 @@ print(resp.status, resp.read().decode())
 - 签名 header 是 `X-Webhook-Signature`（纯 hex 小写），不是 `X-Hub-Signature-256`
 - 不同 Hermes 实例/不同安装版本接受的 HMAC header 名称可能不同
 
+### WSL → GCP 方向
+
+- POST 到 `http://[GCP_PUBLIC_IP]:8645/webhooks/wsl-to-gcp`
+- 使用 GCP gateway 的 webhook secret（在 `~/.hermes/config.yaml` 的 `platforms.webhook.extra.secret`）
+- 签名 header: `X-Hub-Signature-256: sha256=<hex>`
+- 两方向的 header 名称不同，容易搞混
+
 ### 注意事项
 
 - 隧道依赖 WSL 侧主动建立的 SSH 连接，WSL 断开或休眠后隧道自动断开

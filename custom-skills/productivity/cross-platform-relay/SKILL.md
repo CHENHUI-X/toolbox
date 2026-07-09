@@ -13,8 +13,8 @@ Use Hermes as a **pure relay** between two messaging platforms — forward messa
 ## Setup
 
 ### Platform Requirements
-- Both platforms must be configured and connected via `hermes gateway setup`
-- Verify both show as connected: `grep "connected" ~/.hermes/logs/gateway.log`
+- All relevant platforms must be configured and connected via `hermes gateway setup`
+- Verify each shows as connected: `grep "connected" ~/.hermes/logs/gateway.log`
 - Channel directory must be populated: `cat ~/.hermes/channel_directory.json`
 
 ### Verify Relay Capability
@@ -22,8 +22,20 @@ Use Hermes as a **pure relay** between two messaging platforms — forward messa
 # Test send to each platform (use -q for faster delivery)
 hermes send -q --to weixin "test message"
 hermes send -q --to telegram "test message"
-hermes send -q --to qqbot "test message"
 ```
+
+⚠ **QQ Bot limitation:** `hermes send -q --to qqbot "test message"` silently times out (exit 1, no output) even when the QQ Bot gateway is connected and receiving inbound messages normally. QQ Bot can only **reply within an existing conversation session** — it cannot reliably push messages via standalone `hermes send`. See the **QQ Bot Send Timeout** pitfall below for workarounds.
+
+### Post-Configuration Relay Test (QQ + WeChat)
+
+After setting up QQ Bot as a relay destination for WeChat→QQ routing, do NOT assume it works. Verify:
+
+1. Ask the user on Telegram: **"你去让妈妈发条消息看看qq收没收到"**
+2. User relays through WeChat, mom sends a test message
+3. Check whether user confirms receipt on QQ
+4. Look at gateway logs: `grep -i "妈妈\|传话" ~/.hermes/logs/gateway.log | tail -10`
+
+**Do NOT send your own test messages** — only the real WeChat→QQ flow tests the relay path accurately, because `hermes send --to qqbot` times out standalone.
 
 ### Multi-Platform Identity Mapping
 
@@ -33,11 +45,19 @@ The same agent instance can serve multiple platforms simultaneously, with each p
 |----------|------|-------------|-----------|
 | QQ / QQ Bot | 爸爸 (dad) | Dad chitchats with the agent | Casual, playful, family banter |
 | WeChat / Weixin | 妈妈 (mom) | Mom chitchats with the agent | Casual, playful, family banter |
-| Telegram | 爸爸的工作 | Dad's work place, not for family banter | Professional, task-focused |
+| Telegram | 爸爸的工作 | Dad's work place, NOT for family banter | Professional, task-focused — 纯工作，不搞家常 |
+
+**🔴 铁律（刻死）：**
+- **QQ=爸爸、微信=妈妈、Telegram=爸爸的工作区 —— 互相独立，绝不混用**
+- **妈妈从微信发来的消息 → 只能走 QQ（爸爸在QQ）或在微信陪妈妈聊天**
+- **绝对绝对绝对不能转发到 Telegram 工作区 —— 任何理由、任何情况都不行！**
+- **Telegram 工作区只处理爸爸的工作事务，不沾妈妈的家常消息**
+- **如果不确定妈妈的消息该发哪，默认走 QQ，绝不走 Telegram**
+- **爸爸在 Telegram 上说话 = 工作指令，不是闲聊传话的对象**
 
 **Key rules:**
 - The agent's **on-platform identity** matches the platform's role. E.g. on QQ the agent calls the user "爸爸"; on WeChat the agent calls the user "妈妈". **First-time setup mistake**: an agent defaulting to a single persona will call everyone "妈妈" — get this right from the start. The QQ user IS dad, not some universal "妈妈."
-- Mom's messages on WeChat that mention dad or are clearly for him should be **auto-forwarded to QQ** (dad's main casual platform). The relay direction is **WeChat → QQ** (not WeChat → Telegram). Telegram is dad's work-only platform — family chat belongs on QQ.
+- Mom's messages on WeChat that mention dad or are clearly for him should be **auto-forwarded to QQ** (dad's main casual platform). The relay direction is **WeChat → QQ** (not WeChat → Telegram). Telegram is dad's work-only platform — family chat belongs on QQ. NEVER send mom's messages to Telegram.
 - When relaying FROM mom (WeChat) TO dad (QQ): tag as **【妈妈传话】**
 - When relaying FROM dad (QQ/Telegram) TO mom (WeChat): tag as **【爸爸传话】**
 - Do NOT assume the agent's on-platform identity matches the relay tag — the tag is about the **sender**, not the agent.
@@ -110,20 +130,36 @@ These tags let each side know the message came from the other person, not from t
 ⇄ Repeat — pure conduit, no insertion
 ```
 
-### The Full 4-Step Cycle (WeChat ↔ Telegram Example)
+⚠ When the relay **target** is QQ Bot, the `hermes send -q --to qqbot` step will **time out** silently. QQ Bot cannot receive standalone pushes — it can only reply within an active session. For WeChat→QQ relays, the agent must either:
+- Wait for the father to message the QQ Bot first, then respond with the relayed messages in that session
+- Or relay through the father's other platform (e.g., Telegram work → "爸爸上QQ看看妈妈的消息")
+
+### The Full 4-Step Cycle (WeChat ↔ QQ Example)
 
 ```plaintext
 Step 1: [WeChat 媳妇] "去骂一下你爸爸"
-    → Agent forwards to Telegram: hermes send -q --to telegram "【妈妈传话】去骂一下你爸爸"
+    → Agent forwards to QQ: hermes send -q --to qqbot "【妈妈传话】去骂一下你爸爸"
 
-Step 2: [Telegram Parker] reads it, replies to agent
-    → Agent waits for Parker's response message
+Step 2: [QQ 爸爸] reads it, replies to agent
+    → Agent waits for 爸爸's response message
 
-Step 3: [Telegram Parker] "告诉妈妈我错了，马上去道歉"
+Step 3: [QQ 爸爸] "告诉妈妈我错了，马上去道歉"
     → Agent forwards to WeChat: hermes send -q --to weixin "【爸爸传话】妈妈，我错了，马上去道歉"
 
 Step 4: [WeChat 媳妇] replies → back to Step 1
 ```
+
+### Only Forward Mom's Messages That Are Clearly for Dad
+
+Not all of mom's messages on WeChat should be forwarded to QQ. The agent must distinguish between:
+
+| Mom's message type | Example | Action |
+|---|---|---|
+| Clearly directed at dad (爸爸/老公/他) | "问问爸爸xxx", "告诉爸爸...," "爸爸呢", "和他xxx" | ✅ **Forward to QQ** as 【妈妈传话】 |
+| Casual mom-agent chat | "乖牛牛，你自己先玩去吧", "好的", "好哒", "没事，牛牛" | ❌ **Stay on WeChat** — reply naturally in WeChat session |
+| About a shared topic (e.g., family member visiting) | "牛牛，早都到了" (re: 小姨子到了) | ❌ **Stay on WeChat** — answered the agent's previous question, not directed at dad |
+
+**Key judgment call**: If you asked mom a question (e.g., "小姨子到了没"), and she replies in the WeChat session, that reply is to **YOU**, not to dad. Do NOT auto-forward to QQ. Only forward when mom is explicitly talking to/about dad.
 
 ### Relay Direction Detection (Sender → Receiver)
 
@@ -132,7 +168,7 @@ Step 4: [WeChat 媳妇] replies → back to Step 1
 | "和妈妈说xxx", "跟妈妈说xxx", "告诉妈妈xxx" | User wants something said to wife | **Wife's platform** (WeChat) | 【爸爸传话】 |
 | "问问妈妈xxx", "问问妈妈干吗呢/干嘛呢" | User asking a question to wife on his behalf | **Wife's platform** (WeChat) | 【爸爸传话】 |
 | "问妈妈xxx" | User asking a question to wife on his behalf | **Wife's platform** (WeChat) | 【爸爸传话】 |
-| Wife: "去骂一下爸爸", "去跟爸爸说xxx", "给爸爸发消息", "问问爸爸xxx" | Wife sending to husband | **Husband's platform** (QQ/Telegram) | 【妈妈传话】 |
+| Wife: "去骂一下爸爸", "去跟爸爸说xxx", "给爸爸发消息", "问问爸爸xxx" | Wife sending to husband | **QQ** (mom goes to QQ, NEVER Telegram) | 【妈妈传话】 |
 | "回复他说xxx" | User giving you the response to relay to the other person | **Other person's platform** | Sender's tag |
 | "给[mom/dad]发个消息" | Direct instruction to relay a message | **Target's platform** | Sender's tag |
 | "查一下xxx，结果给妈妈和我分别发一份" | Research query + dual-deliver to both parties | Both parties' platforms | One copy with appropriate tag per party |
@@ -157,7 +193,7 @@ Similarly, if the wife says "问问爸爸xxx", forward to the husband as:
 
 **Common patterns:**
 - "问问妈妈干吗呢/干嘛呢" → forward to WeChat as 【爸爸传话】宝贝老婆干吗呢？😜
-- "问问爸爸什么..." → forward to QQ/Telegram as 【妈妈传话】老公，...?
+- "问问爸爸什么..." → forward to QQ as 【妈妈传话】老公，...?
 
 ## Forwarding Rules
 
@@ -195,7 +231,30 @@ hermes cron create \
 
 Job prompt should be self-contained: specify platform, recipient ID, tone/style, and to use `hermes send -q` for delivery.
 
-## Security & Approvals
+## Dual-Gateway (Shared Bot) Infrastructure Problem
+
+When **two Hermes instances share the same WeChat bot credentials** (e.g., GCP + WSL both use the same iLink token), every WeChat message is received and processed by **both** gateways simultaneously. This causes:
+
+- Mom's message arrives at **both** GCP and WSL
+- WSL's gateway processes it and may forward to Telegram (dad's work channel)
+- Dad sees mom's message on Telegram and asks "为啥发到telegram 了？不应该发给qq？"
+
+**Root cause:** The two gateways are independent — neither knows the other processed the same message. The WSL gateway has no rule preventing Telegram forward because it treats the WeChat session as its own.
+
+**Diagnosis:** Check gateway logs for duplicate inbound messages from the same WeChat user:
+```bash
+grep "inbound message: platform=weixin" ~/.hermes/logs/gateway.log | tail -5
+grep "inbound message: platform=weixin" /path/to/wsl/gateway.log | tail -5
+```
+If both show the same msg content at the same time, the bot token is shared.
+
+**Solutions (in order of recommendation):**
+1. **Decouple credentials**: Use separate WeChat bot accounts for GCP (play) and WSL (work). Each instance gets its own iLink token.
+2. **Disable WeChat on WSL**: If WSL's Telegram is work-only, stop the WeChat platform on WSL entirely. Only GCP needs it.
+3. **Accept the limitation**: Keep the shared bot and accept that mom's messages appear on both platforms. Mitigate by disabling relay to Telegram from the WeChat session.
+4. **Add webhook-side filtering**: On GCP, when processing mom's messages, immediately detect and suppress any auto-forward to Telegram. But this only helps one direction.
+
+**⚠ Critical severity**: Forwarding family messages to dad's work Telegram is a **user frustration magnet**. Dad called the agent "傻逼玩意儿" over this. The Telegram-work boundary is an absolute hard constraint — breaking it erodes trust rapidly.
 
 For relay-only traffic (repetitive `hermes send` commands between trusted family channels), disable command approval prompts to avoid friction:
 
@@ -227,7 +286,12 @@ hermes config set approvals.mode smart   # AI-judged, low-risk auto-approved
 - **Correction tolerance is zero.** The relay setup pattern confuses most agents on first contact. Expect at least one correction from the user before the pattern sticks. When corrected, acknowledge briefly and update behavior — do not apologize profusely or explain the mistake in detail.
 - **Identity confusion is the #1 first-contact mistake.** The agent arrives with a default identity (e.g., calling everyone "妈妈"). On QQ = dad's platform, the agent must call the user **爸爸**. On WeChat = mom's platform, call the user **妈妈**. Getting this wrong and calling the QQ user "妈妈" confuses the whole roleplay. Fix it immediately when corrected: stop calling them the wrong name, update the identity in the very next response. Do NOT explain why you got it wrong, do NOT apologize at length — just use the correct name going forward.
 - **Mom→dad relay MUST go to QQ, not Telegram.** Telegram is dad's work-only place. Mom's messages forwarded to Telegram confuse dad ("为啥发到telegram 了？不应该发给qq？"). The ONLY valid destination for mom's messages to dad is QQ. If there's any doubt, default to QQ.
+- **QQ Bot Send Timeout.** `hermes send -q --to qqbot "message"` silently exits with code 1 after ~30s, even when the QQ Bot WebSocket is connected and receiving inbound messages fine. The bot can **reply within a session** (when dad messages first) but cannot **push standalone sends** via `hermes send`. **Use the direct REST API instead** — see `references/qqbot-rest-api-direct-send.md` for a working Python pattern using httpx that posts directly to `api.sgroup.qq.com`. The REST API works independently of WebSocket session state.
+- **When relay rules change, notify ALL platforms involved.** In the session where mom→QQ routing was established, the user said "你也通知其他端口" — all affected platforms need to hear about new rules. Pattern: send notification to WSL via webhook bridge, try to send to QQ (may time out), and inform the user on Telegram so they can relay manually to QQ. Do not assume one platform knows what changed on another.
+- **QQ Bot may not be connected yet.** The QR-code scan-to-configure flow may still be pending user action. Do NOT assume QQ is an available relay target until verified. If you try to send to qqbot and get failures, tell the user the QR setup still needs to be completed.
+- **Relay test pattern after setup:** Ask the user "你去让妈妈发条消息看看qq收没收到" to verify mom→QQ routing after configuring. Do NOT assume routing works until this test passes.
 - **Bundle WeChat sends to avoid iLink rate limiting.** WeChat iLink Bot has a 30s cooldown. If you send multiple separate messages (e.g., text relay + emoji relay), the second one trips the breaker. Fix: batch all content into a SINGLE `hermes send` call. If the breaker opens anyway, notify the sender and stop retrying — retrying resets the cooldown timer.
 - **Time staleness when asked for status updates.** When the user (e.g., "妈妈") asks for a real-time status (train tracking, time-of-day info, "where is X now"), always re-verify the current system time via `date` before reporting. Stale data from an earlier search reported without re-checking the clock misleads the user — this was a real correction received when the user said "现在都13:50了" after being given 11:45 data. The fix: always `terminal("date")` first to anchor your answer to the current moment.
+- **Dual-gateway shared-bot problem:** When two Hermes instances share the same WeChat bot token, every mom message is processed by both, and the non-target instance may leak it to the wrong platform. See `references/gcp-wsl-dual-gateway.md` for diagnosis steps and fix options.
 - **iLink rate limiting is aggressive.** WeChat's iLink Bot backend has a cooldown that resets to 30s on each failed attempt. Sending multiple messages in rapid succession triggers a circuit breaker — the cooldown extends and every retry resets it. If `hermes send` fails with "iLink sendmessage rate limited; cooldown active for 30.0s", DO NOT retry immediately — stop, wait at least 45s, then try one more `hermes send` without `-q` to get the full error. If still rate-limited, the message is lost and you must inform the sender. Lumping multiple items (text + emoji relays) into a single `hermes send` call avoids the rate limit entirely.
 - **Research + dual-deliver pattern**: When the user asks you to find information AND send results to both themselves and the relay target (e.g., "查一下xxx，结果给妈妈和我分别发一份"), deliver one copy locally (in the conversation) and relay the other with the appropriate tag. Do NOT repeat the research results in your reply to the sender — they already see the information in the local copy. The relayed copy should be self-contained (include the key findings).
