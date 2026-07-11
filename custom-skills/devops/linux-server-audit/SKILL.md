@@ -154,6 +154,50 @@ sysctl -p /etc/sysctl.d/99-server-optimize.conf
 | `tcp_fastopen` | 1 | 3 | Enable TFO for both directions |
 | `tcp_slow_start_after_idle` | 1 | 0 | Don't reset cwnd after idle |
 
+### 1GB VM: Swap & Hermes OOM Prevention
+
+On a ≤1GB VM running Hermes gateway + sing-box + cron jobs, the gateway alone uses ~250-350MB. Without swap, a memory spike (multiple concurrent model calls) can trigger OOM killer.
+
+**Swap sizing:**
+```bash
+# 4GB swap for 1GB RAM VM — gives ample headroom
+swapoff /swapfile 2>/dev/null || true
+dd if=/dev/zero of=/swapfile bs=1M count=4096
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo "/swapfile none swap sw 0 0" >> /etc/fstab
+```
+
+**swappiness tuning:**
+```bash
+echo "vm.swappiness=30" > /etc/sysctl.d/99-oom-protect.conf
+sysctl -p /etc/sysctl.d/99-oom-protect.conf
+```
+Value 30 keeps active processes in RAM longer than default 60 but starts swapping before OOM hits. On a 1GB VM, don't go below 20.
+
+**Hermes gateway memory limit (systemd drop-in):**
+```bash
+mkdir -p /etc/systemd/system/hermes-gateway.service.d/
+cat > /etc/systemd/system/hermes-gateway.service.d/99-memory.conf << 'EOF'
+[Service]
+MemoryMax=400M
+MemoryHigh=350M
+OOMPolicy=continue
+EOF
+systemctl daemon-reload
+```
+- `MemoryMax=400M` — hard cap, gateway process killed if exceeded
+- `MemoryHigh=350M` — soft throttle, slows allocator at 350M
+- `OOMPolicy=continue` — don't kill other services if Hermes OOMs
+
+**Verify:**
+```bash
+systemctl show hermes-gateway | grep -E "Memory(Max|High|Current|Peak|SwapCurrent|Available)"
+free -h
+swapon --show
+```
+
 ## Verification
 
 After cleanup, verify:

@@ -12,19 +12,26 @@ category: devops
 
 ```
 GCP IP 变化
-  → cron: gcp-ip-check.sh（每30分钟）
-  → cf-update-dns.py 更新 Cloudflare DNS A 记录
-  → 更新本地 clmi.yaml / jhsub.txt / jhdy.txt
-  → push-sub-to-github.py 生成 override 格式 YAML
-      ├── 推送到 GitHub（私有仓库备份/版本管理）
-      └── 保存到 /etc/s-box/custom-sub.yaml（本地副本）
-          └── subscription-server.service（端口 8888）
-              └── Stash 通过域名拉取
+  → 检测触发: cron (每30分钟) + boot systemd service (开机自启)
+  → gcp-ip-check.sh 检测到 IP 变更
+      ├── cf-update-dns.py → 更新 Cloudflare DNS A 记录
+      ├── 更新本地 clmi.yaml / jhsub.txt / jhdy.txt 中的 IP
+      ├── push-sub-to-github.py → 生成 override YAML 推送到 GitHub
+      └── 重启 subscription-server.service → Stash 立刻拉到最新
 ```
 
 **核心原则**：Stash 不碰 GitHub，只从本机 HTTP 服务拉取。GitHub 仓库可以设为 private。
 
-## 关键文件
+## 触发机制
+
+| 方式 | 触发 | 频率 |
+|------|------|------|
+| cron | `/etc/cron.d/gcp-ip-check` | 每30分钟 |
+| boot | `gcp-ip-check-boot.service` (systemd oneshot) | 每次服务器重启 |
+
+IP 没变时静默，变了才执行完整链路。首次运行也会通知。
+
+## IP 变更完整流程
 
 | 文件 | 用途 |
 |------|------|
@@ -43,7 +50,7 @@ GCP IP 变化
 | `/etc/s-box/jhsub.txt` | V2Ray share link 格式订阅 |
 | `/root/toolbox/` | 克隆的 toolbox 仓库本地副本 |
 
-## IP 变更时的完整流程
+## IP 变更完整流程
 
 ### gcp-ip-check.sh
 
@@ -61,9 +68,17 @@ if [ "$CURRENT_IP" != "$LAST_IP" ]; then
     sed -i "s/@$LAST_IP:/@$CURRENT_IP:/g" /etc/s-box/jhsub.txt
     sed -i "s/@$LAST_IP:/@$CURRENT_IP:/g" /etc/s-box/jhdy.txt
 
-    # 推送 GitHub + 更新本地副本
-    export GH_TOKEN=$(cat /root/.github_token.txt | tr -d '\n')
-    python3 /root/.hermes/scripts/push-sub-to-github.py
+    # 更新 DDNS
+    /root/.hermes/scripts/cf-update-dns.py
+
+    # 生成订阅文件 + 推送到 GitHub
+    /root/.hermes/scripts/push-sub-to-github.py
+
+    # 重启本地订阅服务（Stash 拉取的最新订阅立即可用）
+    systemctl restart subscription-server.service || pkill -f subscription-server.py
+
+    # Telegram 通知
+    tg_notify "..."
 fi
 ```
 
@@ -144,6 +159,10 @@ journalctl -u subscription-server.service --no-pager -n 20
 
 ## 注意
 
+- **systemd 重启问题**：从 Hermes gateway 内部无法 `systemctl restart hermes-gateway`（gateway 会阻止）。需要在 `/etc/cron.d/` 或外部 ssh 里执行。gateway 内部的 `hermes send` 到 QQ 也会超时 — QQ bot 走 WebSocket 需要指定 `qqbot:CHANNEL_ID`，纯 `--to qqbot` 会因为没设 home channel 而失败。
+- **`hermes send` 时效性**：发送到 Telegram 不超时，发送到 QQ bot 偶尔会因重连周期超时 60s 才返回，但实际消息已发出
+- **IP 变更完整链路**：gcp-ip-check.sh 现在包括 cf-update-dns + push-sub-to-github + subscription-server 重启三件套
+
 - **token 安全问题**：`/root/.github_token.txt` 中的 PAT 涉及写入权限，注意文件权限
 - **GitHub PAT auth failure** — when GitHub API returns 401 `Bad credentials` even though the token was correctly generated, the most common causes (in order): (1) token was created for a different GitHub account, (2) fine-grained token permissions didn't include `Contents: Read and write`, (3) token needs SSO authorization. Classic tokens (`ghp_...`) with `repo` scope are more reliable than fine-grained tokens (`github_pat_...`) for automation. To test: `curl -u "username:token" https://api.github.com/user` — if 200 but write returns 404, it's a permission issue.
 - clmi.yaml 只有 VLESS 节点的 server 是动态 IP，其他 4 个节点用 DDNS 域名（google.cloud.eosphor.dpdns.org）固定不变
@@ -189,11 +208,12 @@ bash /root/.hermes/scripts/hermes-skills-backup.sh
 
 ### Related Cron Tasks
 
-All cron tasks managed in `/etc/cron.d/`:
+All cron + systemd one-shot tasks:
 
 | File | Schedule | Purpose |
 |------|----------|---------|
 | `gcp-ip-check` | Every 30 min | IP change detection + auto-fix |
+| `gcp-ip-check-boot.service` | On every reboot | IP check at boot (systemd oneshot) |
 | `hermes-skills-backup` | Daily 10:00 CST | Skills → GitHub toolbox |
 | `hermes-scripts-backup` | Daily 09:05 CST | Scripts → hermes-scripts repo |
 | `hermes-update` | Daily 09:00 CST | Hermes agent version check |
