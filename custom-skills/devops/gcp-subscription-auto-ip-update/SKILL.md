@@ -11,13 +11,12 @@ category: devops
 ## 架构概览
 
 ```
-GCP IP 变化
-  → 检测触发: cron (每30分钟) + boot systemd service (开机自启)
+GCP IP 变化（仅服务器重启时触发，无定期 cron）
+  → gcp-ip-check-boot.service (systemd oneshot, after network-online.target)
   → gcp-ip-check.sh 检测到 IP 变更
-      ├── cf-update-dns.py → 更新 Cloudflare DNS A 记录
-      ├── 更新本地 clmi.yaml / jhsub.txt / jhdy.txt 中的 IP
-      ├── push-sub-to-github.py → 生成 override YAML 推送到 GitHub
-      └── 重启 subscription-server.service → Stash 立刻拉到最新
+      ├── cf-update-dns.py "$CURRENT_IP"  → Cloudflare DNS A 记录
+      ├── push-sub-to-github.py            → 生成 override YAML 推送到 GitHub
+      └── systemctl restart subscription-server.service → Stash 立刻拉到最新
 ```
 
 **核心原则**：Stash 不碰 GitHub，只从本机 HTTP 服务拉取。GitHub 仓库可以设为 private。
@@ -26,10 +25,10 @@ GCP IP 变化
 
 | 方式 | 触发 | 频率 |
 |------|------|------|
-| cron | `/etc/cron.d/gcp-ip-check` | 每30分钟 |
-| boot | `gcp-ip-check-boot.service` (systemd oneshot) | 每次服务器重启 |
+| ~~cron~~ | ~~`/etc/cron.d/gcp-ip-check`~~ | ~~每30分钟~~ **已删除**（用户要求仅重启触发） |
+| boot | `gcp-ip-check-boot.service` (systemd oneshot) | 仅服务器重启 |
 
-IP 没变时静默，变了才执行完整链路。首次运行也会通知。
+IP 没变时静默，变了才执行完整链路。不再有定期轮询，减少资源占用。
 
 ## IP 变更完整流程
 
@@ -68,8 +67,8 @@ if [ "$CURRENT_IP" != "$LAST_IP" ]; then
     sed -i "s/@$LAST_IP:/@$CURRENT_IP:/g" /etc/s-box/jhsub.txt
     sed -i "s/@$LAST_IP:/@$CURRENT_IP:/g" /etc/s-box/jhdy.txt
 
-    # 更新 DDNS
-    /root/.hermes/scripts/cf-update-dns.py
+    # 更新 DDNS — 必须传 IP 参数，否则静默失败！
+    /root/.hermes/scripts/cf-update-dns.py "$CURRENT_IP"
 
     # 生成订阅文件 + 推送到 GitHub
     /root/.hermes/scripts/push-sub-to-github.py
@@ -157,11 +156,24 @@ systemctl restart subscription-server.service
 journalctl -u subscription-server.service --no-pager -n 20
 ```
 
+## 相关技能
+
+此技能已将大部分内容整合到 `devops/gcp-operations`（GCP 运维总览技能）。本技能保留作为 IP 自动更新的具体实现参考，但新变更请优先更新 gcp-operations。
+
+- `devops/gcp-operations` — GCP VM 运维总览（含 IP 检测、DDNS、订阅更新、内存优化）
+- `devops/sing-box-vps` — 代理服务管理
+- `devops/system-cron-setup` — 系统 crontab 管理
+
 ## 注意
 
+- **cf-update-dns.py 必须传 IP 参数**：`/root/.hermes/scripts/cf-update-dns.py "$CURRENT_IP"`，不传就是静默失败！**这是此前DDNS没自动更新的根因**。
+- **cf-update-dns.py 要有执行权限**：`chmod +x`，否则开机启动时调不了。
+- **subscription-server 必须用 systemd 管理**（带 `Restart=always`），裸进程会被 `pkill` 杀掉再起不来。已创建 `/etc/systemd/system/subscription-server.service`。
+- **curl 要加超时**：开机时网络可能没完全就绪，不加 `--connect-timeout 5 --max-time 10` 可能卡死。
+- **依赖检查**：调用 cf-update-dns.py 和 push-sub-to-github.py 前检查 `[ -x ]`，脚本不存在或不可执行时要有日志兜底，而不是静默失败。
+- ~~**每30分钟 cron 已删除**~~（用户要求仅重启触发，GCP 临时 IP 只在停机/重启时变）
 - **systemd 重启问题**：从 Hermes gateway 内部无法 `systemctl restart hermes-gateway`（gateway 会阻止）。需要在 `/etc/cron.d/` 或外部 ssh 里执行。gateway 内部的 `hermes send` 到 QQ 也会超时 — QQ bot 走 WebSocket 需要指定 `qqbot:CHANNEL_ID`，纯 `--to qqbot` 会因为没设 home channel 而失败。
 - **`hermes send` 时效性**：发送到 Telegram 不超时，发送到 QQ bot 偶尔会因重连周期超时 60s 才返回，但实际消息已发出
-- **IP 变更完整链路**：gcp-ip-check.sh 现在包括 cf-update-dns + push-sub-to-github + subscription-server 重启三件套
 
 - **token 安全问题**：`/root/.github_token.txt` 中的 PAT 涉及写入权限，注意文件权限
 - **GitHub PAT auth failure** — when GitHub API returns 401 `Bad credentials` even though the token was correctly generated, the most common causes (in order): (1) token was created for a different GitHub account, (2) fine-grained token permissions didn't include `Contents: Read and write`, (3) token needs SSO authorization. Classic tokens (`ghp_...`) with `repo` scope are more reliable than fine-grained tokens (`github_pat_...`) for automation. To test: `curl -u "username:token" https://api.github.com/user` — if 200 but write returns 404, it's a permission issue.
