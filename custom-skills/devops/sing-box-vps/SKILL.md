@@ -290,6 +290,7 @@ Example before/after metrics from a real deployment:
 
 - `references/yonggekkk-sing-box-yg.md` — Full repo reference, file structure, video tutorials
 - `references/tuic-version-field.md` — Tuic version compatibility error transcript (sing-box 1.13.x)
+- `references/socks5-inbound-telegram.md` — Running sing-box as a SOCKS5 proxy for direct Telegram/app use, without external clients
 
 ## GCP Ephemeral IP Change Handling
 

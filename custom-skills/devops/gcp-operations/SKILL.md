@@ -323,8 +323,29 @@ tail -5 /tmp/gcp-ip-check.log
 
 ## Related Skills
 
-- `gcp-subscription-auto-ip-update` — narrow skill for subscription IP auto-update (candidate for consolidation into this skill)
+- `gcp-subscription-auto-ip-update` — narrow skill for subscription IP auto-update (candidate for consolidation into this skill — its content is already covered by the IP Change Detection section above)
 - `sing-box-vps` — proxy server management
 - `system-cron-setup` — system crontab for monitoring scripts
 - `cross-platform-relay` — WeChat/QQ/Telegram relay (uses GCP as the relay host)
 - `hermes-cross-instance-communication` — multi-Hermes setup with IAP tunnels
+
+## Hermes Update: Handling Local Modifications
+
+When running `git pull` in the Hermes repo (`/usr/local/lib/hermes-agent`), local modifications to tracked files (e.g., patching `adapter.py` for debugging) will **block the update**:
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+    gateway/platforms/qqbot/adapter.py
+Please commit your changes or stash them before you merge.
+```
+
+**Fix:** Stash local changes before pulling, then drop the stash after:
+
+```bash
+cd /usr/local/lib/hermes-agent
+git stash push -m "auto-stash-before-update" -- . 2>/dev/null
+git pull origin main
+git stash drop 2>/dev/null   # only if the stash is no longer needed
+```
+
+The auto-update script at `/root/.hermes/scripts/hermes-update.sh` has been patched to auto-stash before pulling, so cron-based updates won't fail on this.
