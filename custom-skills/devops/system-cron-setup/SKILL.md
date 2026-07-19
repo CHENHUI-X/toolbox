@@ -252,6 +252,7 @@ systemctl restart myservice        # start fresh
 ## Pitfalls
 
 - **Secret redaction**: Hermes `security.redact_secrets: true` causes TELEGRAM_BOT_TOKEN to display as `***` in terminal output. The actual file content is fine — scripts that `grep` the .env file at runtime will get the real value. Use `base64` encoding if you need to inspect tokens.
+- **Venv pip not found when script resets PATH**: A cron script that sets `export PATH="/usr/local/sbin:/usr/local/bin:..."` (a fixed system PATH) will NOT find pip if it's installed in a virtualenv at `/path/to/venv/bin/pip`. Always use the absolute venv path: `"$VENV_DIR/bin/pip" install ...` instead of bare `pip install ...`. This is especially common with editable-installed packages like Hermes Agent.
 - **cron.d file format**: Files in `/etc/cron.d/` require a 6th field (username) before the command. Regular crontabs omit this field.
 - **Permission**: Files under `/etc/cron.d/` should be `644` and owned by root.
 - **The write_file tool refuses to write to `/etc/cron.d/`** — use `echo ... | sudo tee /etc/cron.d/<name>` via terminal.
@@ -274,6 +275,21 @@ journalctl -u cron --since "YYYY-MM-DD HH:MM:SS" --until "YYYY-MM-DD HH:MM:SS" |
 
 crontab -l  # user-level crontab — separate from /etc/cron.d/!
 ```
+
+### Investigating unexpected gateway restarts
+
+When the user reports `✅ Hermes Gateway 已自动重启` and the gateway logs show `Received SIGTERM — shutdown context: signal=SIGTERM under_systemd=yes parent_pid=1 parent_name=systemd`:
+
+1. **Check cron first** — look in both `/etc/cron.d/*` and `crontab -l` for any script that triggers `systemctl restart hermes-gateway`
+2. **Check gateway exit diag logs** — `~/.hermes/logs/gateway-shutdown-diag.log` may have ps/pstree/loadavg/dmesg snapshots
+3. **Check Telegram network errors before the SIGTERM** — repeated `Server disconnected without sending a response` errors from Telegram API can cascade into systemd watchdog timeout → SIGTERM → auto-restart
+4. **Don't assume OOM or resource pressure** — check gateway shutdown diag for loadavg (e.g. 0.08 = no pressure) and dmesg for OOM kills
+5. **The gateway uses `Restart=on-failure`** — SIGTERM exit code 1 triggers a restart; this is by design
+
+**Common root causes (in order of likelihood):**
+- 🔴 Cron script that pulls + restarts (e.g. daily update check with `systemctl restart hermes-gateway`)
+- 🟡 Telegram network instability → repeated connection failures → systemd watchdog timeout → SIGTERM
+- 🟢 User-initiated restart (rare on auto-notification)
 
 See `references/cron-source-investigation.md` for the full investigative workflow with a real example.
 

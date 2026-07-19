@@ -70,6 +70,97 @@ gcloud compute firewall-rules create allow-socks5 \
   --target-tags http-server
 ```
 
+## 关键陷阱：SOCKS5 → direct 出口不能解决 GCP 网络问题
+
+**如果你在 GCP 上跑 sing-box，SOCKS5 入站走 `direct` 出口，流量路径是：**
+
+```
+Telegram App → 服务器公网IP:10808 → socks-in → direct → GCP 直连互联网
+```
+
+这意味着 Telegram API 的流量 **最终还是从 GCP 直连出去** 的。如果 GCP 到 Telegram API（`api.telegram.org`）的网络本身就不稳定（GCP 常见问题），这个代理配置**没有任何改善作用**。
+
+**要真正改善 GCP → Telegram 的网络稳定性，必须让 Telegram API 流量走不同的出口通道。**
+
+## 通过 WARP 出口改善 Telegram 稳定性
+
+如果 sing-box 配置了 WARP（Cloudflare WireGuard）出站，可以把 Telegram API 的 DNS 域名路由到 WARP 出口，利用 Cloudflare 的网络路径绕开 GCP 直连的拥堵。
+
+### 方案：域名规则分流
+
+在 `route.rules` 中添加：
+
+```json
+{
+    "domain_suffix": [
+        "telegram.org",
+        "api.telegram.org",
+        "t.me",
+        "telegra.ph"
+    ],
+    "outbound": "warp-out"
+}
+```
+
+**注意事项：**
+- `warp-out` 必须在 `endpoints` 中有对应的 WireGuard 配置（见 SKILL.md 的 WARP 配置）
+- 规则放在 `direct` 兜底规则**之前**（sing-box 规则顺序匹配）
+- 如果 `socks-in` 有专门的路由规则（`"inbound": ["socks-in"], "outbound": "direct"`），它和上面的域名规则是 AND 还是 OR 关系取决于规则动作。更好的做法是：
+  - 不要给 `socks-in` 指定固定的 `direct` 出站
+  - 让 sing-box 走正常的域名/SNI 嗅探路由，这样 Telegram API 流量自然走 WARP，其他流量走 direct
+
+### 推荐的完整路由规则结构
+
+```json
+"route": {
+    "rules": [
+        // 嗅探优先
+        { "action": "sniff" },
+        // Telegram API → WARP 出口
+        {
+            "domain_suffix": [
+                "telegram.org",
+                "t.me",
+                "telegra.ph"
+            ],
+            "outbound": "warp-out"
+        },
+        // socks-in 入站的其他流量走 direct
+        {
+            "inbound": ["socks-in"],
+            "outbound": "direct"
+        },
+        // 兜底
+        {
+            "network": "udp,tcp",
+            "outbound": "direct"
+        }
+    ]
+}
+```
+
+### 验证 WARP 出口是否生效
+
+```bash
+# 检查 WARP 接口是否启动
+wg show
+
+# 查看 sing-box 日志确认路由
+journalctl -u sing-box.service --no-pager -n 50 | grep -i "telegram\|warp"
+
+# 验证 Telegram 是否通过 WARP 出站
+# SSH 到服务器，用 curl 显式走 socks5 测试
+curl -s --socks5 127.0.0.1:10808 https://api.telegram.org/bot<TOKEN>/getMe
+```
+
+## 其他可选出口方案
+
+| 出口 | 适用场景 | 配置注意 |
+|------|---------|---------|
+| **WARP (wireguard)** | Cloudflare 网络，免费，多数情况下稳定 | 需 WireGuard 配置，延迟略高于直连 |
+| **socks-out** | 如果有第三方 SOCKS5 代理 | 指向 `127.0.0.1:40000` 或远程代理 |
+| **自定义 outbound** | 任意自定义协议 | 需要对应出站配置 |
+
 ## Telegram 客户端配置
 
 | 字段 | 值 |
@@ -88,3 +179,4 @@ Settings → Data and Storage → Proxy → Add Proxy → SOCKS5
 - **端口别冲突** — 10808 是常用 SOCKS5 端口，确认没有被其他服务占用。
 - **GCP 双防火墙** — 即使 VM 内 iptables 开了，GCP 云防火墙层面也要放行。参见 `gcp-operations` skill 的防火墙章节。
 - **用户密码建议去掉** — 临时设备用无密码更方便。如果担心被扫描，改一个非标准端口即可。
+- **域名规则顺序** — `direct` 兜底规则必须是最后一条，否则域名分流规则不生效。
