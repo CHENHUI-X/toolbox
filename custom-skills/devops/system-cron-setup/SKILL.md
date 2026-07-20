@@ -1,7 +1,7 @@
 ---
 name: system-cron-setup
 description: "Set up and manage scheduled tasks using system-level crontab (/etc/cron.d/) instead of Hermes internal cron scheduler"
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 tags: [cron, crontab, scheduled-tasks, systemd, telegram-notification]
 ---
@@ -21,6 +21,19 @@ Use this skill when the user asks to create, modify, or migrate scheduled tasks 
 ## User Preference
 
 **ALL cron/定时脚本 must use system crontab at `/etc/cron.d/`, NOT Hermes internal cron.** Hermes internal cron is only for tasks that are OK to stop when the gateway stops.
+
+### Timezone
+
+**User preference (Parker): "永远记住，我说的时间都是北京时间"**
+
+System time on this server: **Asia/Shanghai (CST, UTC+8)** — `timedatectl` confirms this.
+
+- ✅ Always check `timedatectl | grep "Time zone"` before writing cron entries
+- ✅ When the user says "北京时间 X点", write cron directly: `0 1 * * *` = 01:00 in system time
+- ❌ Don't assume UTC — verify first
+- ❌ Don't do arithmetic UTC→CST conversions in your head without checking
+
+**Pitfall:** If system is already CST and you write `0 17 * * 0` thinking "17 UTC = 01 CST next day", you'll actually get Sunday 17:00 CST. Always `timedatectl` first.
 
 ## How To
 
@@ -280,13 +293,27 @@ crontab -l  # user-level crontab — separate from /etc/cron.d/!
 
 When the user reports `✅ Hermes Gateway 已自动重启` and the gateway logs show `Received SIGTERM — shutdown context: signal=SIGTERM under_systemd=yes parent_pid=1 parent_name=systemd`:
 
-1. **Check cron first** — look in both `/etc/cron.d/*` and `crontab -l` for any script that triggers `systemctl restart hermes-gateway`
-2. **Check gateway exit diag logs** — `~/.hermes/logs/gateway-shutdown-diag.log` may have ps/pstree/loadavg/dmesg snapshots
-3. **Check Telegram network errors before the SIGTERM** — repeated `Server disconnected without sending a response` errors from Telegram API can cascade into systemd watchdog timeout → SIGTERM → auto-restart
+0. **Grep ALL cron files for the restart command (fastest diagnostic):**
+   ```bash
+   grep -r "restart.*hermes-gateway\|restart.*gateway" /etc/cron* /etc/cron.d/* /var/spool/cron/ 2>/dev/null
+   ```
+   A stray `systemctl restart hermes-gateway` can be hiding in **any** cron file, even one with a completely different purpose (e.g. a skills-backup cron file with an extra uncommented line). This alone finds the root cause in >80% of cases.
+
+1. **Check cron journal** for the exact command that ran at the restart time:
+   ```bash
+   journalctl -u cron --since "YYYY-MM-DD HH:MM:SS" --until "YYYY-MM-DD HH:MM:SS" --no-pager | grep CMD
+   ```
+
+2. **Check both cron sources** — `/etc/cron.d/*` AND `crontab -l` (user crontab). They are independent.
+
+3. **Check gateway exit diag logs** — `~/.hermes/logs/gateway-shutdown-diag.log` may have ps/pstree/loadavg/dmesg snapshots
+
 4. **Don't assume OOM or resource pressure** — check gateway shutdown diag for loadavg (e.g. 0.08 = no pressure) and dmesg for OOM kills
+
 5. **The gateway uses `Restart=on-failure`** — SIGTERM exit code 1 triggers a restart; this is by design
 
 **Common root causes (in order of likelihood):**
+- 🔴 **Stray restart command in an unrelated cron file** — an existing cron file (backup script, update script, etc.) may have an extra uncommented `systemctl restart hermes-gateway` line added by some setup script. Always grep ALL cron files, don't just check named Hermes files.
 - 🔴 Cron script that pulls + restarts (e.g. daily update check with `systemctl restart hermes-gateway`)
 - 🟡 Telegram network instability → repeated connection failures → systemd watchdog timeout → SIGTERM
 - 🟢 User-initiated restart (rare on auto-notification)

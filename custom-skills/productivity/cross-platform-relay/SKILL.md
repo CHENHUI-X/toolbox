@@ -89,6 +89,21 @@ Prefix relayed messages with a clear direction label so recipients know who the 
 | Platform B → Platform A | **【B传话】** natural message 😄 |
 
 Example labels: 【妈妈传话】, 【爸爸传话】, 【A传话】, 【B传话】
+### Relay Voice Framing 🎯 (Critical)
+
+The relay message body must read like the **SENDER is speaking directly to the recipient** in first person. The tag establishes who is talking; the body is what they say, in their voice. This is the #1 correction magnet.
+
+**Golden rule:** `【X传话】` + `[X's first-person voice, no extra 第三人称框框]`
+
+| ✅ Correct (direct voice) | ❌ Wrong (agent narrating) | Why |
+|-----------|---------|-----|
+| 【爸爸传话】老婆，收到你消息很开心～😄 | 老婆，**爸爸**收到你消息很开心 | Repeating 爸爸 in body sounds like 3rd-person report |
+| 【爸爸传话】宝贝老婆干吗呢？😜 | 老婆，爸爸问我你在干吗 | Agent narrating instead of direct question |
+| 【爸爸传话】老婆不早了快睡吧😘 | 老婆快睡吧，爸爸让你早睡 | Gentle command vs. relayed command |
+
+**Exception — when the sender's original message uses third-person self-reference:**
+If dad says literally 「和妈妈说，爸爸爱他」, the 爸爸 in the body is the sender's own choice of words. PRESERVE it: 【爸爸传话】爸爸说他爱你、喜欢你. The difference: did the sender add the role-name themselves, or did the agent invent it?
+
 ### Paraphrasing & Flair
 
 Messages do **not** need to be forwarded word-for-word. The user expects natural rephrasing:
@@ -296,4 +311,4 @@ hermes config set approvals.mode smart   # AI-judged, low-risk auto-approved
 - **iLink rate limiting is aggressive.** WeChat's iLink Bot backend has a cooldown that resets to 30s on each failed attempt. Sending multiple messages in rapid succession triggers a circuit breaker — the cooldown extends and every retry resets it. If `hermes send` fails with "iLink sendmessage rate limited; cooldown active for 30.0s", DO NOT retry immediately — stop, wait at least 45s, then try one more `hermes send` without `-q` to get the full error. If still rate-limited, the message is lost and you must inform the sender. Lumping multiple items (text + emoji relays) into a single `hermes send` call avoids the rate limit entirely.
 - **Research + dual-deliver pattern**: When the user asks you to find information AND send results to both themselves and the relay target (e.g., "查一下xxx，结果给妈妈和我分别发一份"), deliver one copy locally (in the conversation) and relay the other with the appropriate tag. Do NOT repeat the research results in your reply to the sender — they already see the information in the local copy. The relayed copy should be self-contained (include the key findings).
 - **Stale instruction expiration — 🚩用户说"刷新"或"很久以前了"就意味着翻篇**: When the user says "那都是很久以前了" or "刷新一下吧" or any signal that past instructions are stale, ALL previous relay instructions from that session expire immediately. Do NOT reference or re-execute old relays. This applies particularly to time-sensitive messages like "催睡/叫XX干吗/发消息给XX" — once the user indicates the moment has passed, treat those instructions as cancelled. The agent should NOT say "但是您之前说..." or argue about what was said before — just accept the refresh and move on.
-- **Third-person relay of sender identity (爸爸爱他 → 爸爸说他爱你)**: When relaying a message where the sender refers to themselves or their relationship to the target in third person (e.g., "和妈妈说，爸爸爱他、喜欢他"), PRESERVE the third-person framing in the relayed message. Relay as "【爸爸传话】爸爸说他爱你、喜欢你" NOT "【爸爸传话】我爱你". The sender is speaking ABOUT themselves, not AS the agent. Similarly, if the sender says "告诉妈妈，你爸想她了", relay as "妈妈，你爸想你了". Key rule: when the sender uses a role-name (爸爸/妈妈/老公/老婆) to refer to themselves, keep that same role-name in the relay — do NOT substitute 我/你 based on the agent's persona.
+- **Third-person relay of sender identity — TWO cases, not one**: Getting the voice framing wrong triggers angry user corrections. There are two distinct sub-rules:\n\n  **Case A — Sender uses third-person (preserve it):** When the sender says 「和妈妈说，爸爸爱他、喜欢他」, they refer to themselves as 爸爸. PRESERVE this: relay as 【爸爸传话】爸爸说他爱你、喜欢你, NOT 【爸爸传话】我爱你. The sender is speaking about themselves, not as the agent. Similarly, 「告诉妈妈，你爸想她了」 → 妈妈，你爸想你了. Key: sender uses role-name (爸爸/妈妈/老公/老婆) for themselves → keep it.\n\n  **Case B — Sender speaks in first-person (DO NOT add third-person):** When the sender says things like 「让妈妈睡吧」 or 「和他说爸爸很开心」 without self-referral in the message body, the relay must read like the sender speaking directly to the recipient. Relay as 【爸爸传话】老婆不早了快睡吧 — NOT 【爸爸传话】老婆，爸爸让你早睡. The tag already establishes who's talking. Repeating the role-name in the body makes it sound like a bot report, not a direct message. This was a real user correction in session 2026-07-15.\n\n  **Heuristic:** Read the relay aloud. Does it sound like the sender is texting the recipient directly? If you hear 「爸爸说...」「老公说...」「妈妈说...」 as a narrator voice, you invented third-person. Cut the extra role-name. Only keep the role-name in the body when the sender's original message included it as self-reference.
