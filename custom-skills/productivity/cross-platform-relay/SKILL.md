@@ -301,7 +301,34 @@ hermes config set approvals.mode smart   # AI-judged, low-risk auto-approved
 - **Correction tolerance is zero.** The relay setup pattern confuses most agents on first contact. Expect at least one correction from the user before the pattern sticks. When corrected, acknowledge briefly and update behavior — do not apologize profusely or explain the mistake in detail.
 - **Identity confusion is the #1 first-contact mistake.** The agent arrives with a default identity (e.g., calling everyone "妈妈"). On QQ = dad's platform, the agent must call the user **爸爸**. On WeChat = mom's platform, call the user **妈妈**. Getting this wrong and calling the QQ user "妈妈" confuses the whole roleplay. Fix it immediately when corrected: stop calling them the wrong name, update the identity in the very next response. Do NOT explain why you got it wrong, do NOT apologize at length — just use the correct name going forward.
 - **Mom→dad relay MUST go to QQ, not Telegram.** Telegram is dad's work-only place. Mom's messages forwarded to Telegram confuse dad ("为啥发到telegram 了？不应该发给qq？"). The ONLY valid destination for mom's messages to dad is QQ. If there's any doubt, default to QQ.
-- **QQ Bot Send Timeout.** `hermes send -q --to qqbot "message"` silently exits with code 1 after ~30s, even when the QQ Bot WebSocket is connected and receiving inbound messages fine. The bot can **reply within a session** (when dad messages first) but cannot **push standalone sends** via `hermes send`. **Use the direct REST API instead** — see `references/qqbot-rest-api-direct-send.md` for a working Python pattern using httpx that posts directly to `api.sgroup.qq.com`. The REST API works independently of WebSocket session state.
+- **QQ Bot Send Timeout.** `hermes send -q --to qqbot "message"` silently exits with code 1 after ~30s, even when the QQ Bot WebSocket is connected and receiving inbound messages fine. The bot can **reply within a session** (when dad messages first) but cannot **push standalone sends** via `hermes send`. **Use the direct REST API instead** — see `references/qqbot-rest-api-direct-send.md`. The REST API works independently of WebSocket session state.
+
+**Quick terminal pattern (copy-paste ready for dad's QQ Chat ID C8E2C7968148EB6B56F0FAEC285A96C8):**
+```bash
+cd /root && python3 -c "
+import httpx, asyncio
+
+async def send_qq():
+    with open('.hermes/.env') as f:
+        env = {}
+        for line in f:
+            if '=' in line and not line.startswith('#'):
+                k, v = line.strip().split('=', 1)
+                env[k] = v
+    appid = env.get('QQ_APP_ID', '')
+    secret = env.get('QQ_CLIENT_SECRET', '')
+    chat_id = 'C8E2C7968148EB6B56F0FAEC285A96C8'
+    async with httpx.AsyncClient(timeout=15) as client:
+        token_resp = await client.post('https://bots.qq.com/app/getAppAccessToken',
+            json={'appId': appid, 'clientSecret': secret})
+        access_token = token_resp.json().get('access_token')
+        headers = {'Authorization': f'QQBot {access_token}', 'Content-Type': 'application/json'}
+        payload = {'content': '替换为消息内容', 'msg_type': 0}
+        url = f'https://api.sgroup.qq.com/v2/users/{chat_id}/messages'
+        resp = await client.post(url, json=payload, headers=headers)
+        print('OK' if resp.status_code in {200, 201} else f'FAIL {resp.status_code}')
+asyncio.run(send_qq())
+"
 - **When relay rules change, notify ALL platforms involved.** In the session where mom→QQ routing was established, the user said "你也通知其他端口" — all affected platforms need to hear about new rules. Pattern: send notification to WSL via webhook bridge, try to send to QQ (may time out), and inform the user on Telegram so they can relay manually to QQ. Do not assume one platform knows what changed on another.
 - **QQ Bot may not be connected yet.** The QR-code scan-to-configure flow may still be pending user action. Do NOT assume QQ is an available relay target until verified. If you try to send to qqbot and get failures, tell the user the QR setup still needs to be completed.
 - **Relay test pattern after setup:** Ask the user "你去让妈妈发条消息看看qq收没收到" to verify mom→QQ routing after configuring. Do NOT assume routing works until this test passes.
