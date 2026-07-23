@@ -1,7 +1,7 @@
 ---
 name: system-cron-setup
 description: "Set up and manage scheduled tasks using system-level crontab (/etc/cron.d/) instead of Hermes internal cron scheduler"
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 tags: [cron, crontab, scheduled-tasks, systemd, telegram-notification]
 ---
@@ -26,14 +26,14 @@ Use this skill when the user asks to create, modify, or migrate scheduled tasks 
 
 **User preference (Parker): "永远记住，我说的时间都是北京时间"**
 
-System time on this server: **Asia/Shanghai (CST, UTC+8)** — `timedatectl` confirms this.
+System time on this server: **Asia/Shanghai (CST, UTC+8)** — confirmed via `timedatectl | grep "Time zone"`.
 
 - ✅ Always check `timedatectl | grep "Time zone"` before writing cron entries
 - ✅ When the user says "北京时间 X点", write cron directly: `0 1 * * *` = 01:00 in system time
-- ❌ Don't assume UTC — verify first
-- ❌ Don't do arithmetic UTC→CST conversions in your head without checking
+- ❌ Don't assume UTC — verify first. **This server runs CST, not UTC.**
+- ❌ Don't do UTC→CST arithmetic in your head — you will get it wrong
 
-**Pitfall:** If system is already CST and you write `0 17 * * 0` thinking "17 UTC = 01 CST next day", you'll actually get Sunday 17:00 CST. Always `timedatectl` first.
+**Pitfall (real case July 2026):** User said "北京时间1点". System was already CST. I wrote `0 17 * * 0` thinking "17 UTC = 01 CST next day" — but cron uses system time, so I actually wrote Sunday 17:00 CST. Always `timedatectl` first, then write the cron expression in the user's timezone directly with no conversion.
 
 ## How To
 
@@ -298,6 +298,8 @@ When the user reports `✅ Hermes Gateway 已自动重启` and the gateway logs 
    grep -r "restart.*hermes-gateway\|restart.*gateway" /etc/cron* /etc/cron.d/* /var/spool/cron/ 2>/dev/null
    ```
    A stray `systemctl restart hermes-gateway` can be hiding in **any** cron file, even one with a completely different purpose (e.g. a skills-backup cron file with an extra uncommented line). This alone finds the root cause in >80% of cases.
+   
+   **Real case (July 2026):** Days of unexplained daily 19:36 CST (`36 19 * * *`) gateway restarts — shutdown context showed `SIGTERM under_systemd=yes`. No user crontab entries, no OOM. The culprit was a `systemctl restart hermes-gateway` hiding as an uncommented line in `/etc/cron.d/hermes-skills-backup`, a cron file whose only purpose was skills backup. Found via `grep -r "restart.*gateway" /etc/cron*`. Root cause was that some process (possibly the yonggekkk sb.sh script or a manual edit) had appended the line to the wrong file.
 
 1. **Check cron journal** for the exact command that ran at the restart time:
    ```bash
@@ -313,7 +315,7 @@ When the user reports `✅ Hermes Gateway 已自动重启` and the gateway logs 
 5. **The gateway uses `Restart=on-failure`** — SIGTERM exit code 1 triggers a restart; this is by design
 
 **Common root causes (in order of likelihood):**
-- 🔴 **Stray restart command in an unrelated cron file** — an existing cron file (backup script, update script, etc.) may have an extra uncommented `systemctl restart hermes-gateway` line added by some setup script. Always grep ALL cron files, don't just check named Hermes files.
+- 🔴 **Stray restart command in an unrelated cron file** — an existing cron file (backup script, update script, etc.) may have an extra uncommented `systemctl restart hermes-gateway` line added by some process. Always `grep -r "restart.*gateway" /etc/cron*` — don't just check named Hermes files.
 - 🔴 Cron script that pulls + restarts (e.g. daily update check with `systemctl restart hermes-gateway`)
 - 🟡 Telegram network instability → repeated connection failures → systemd watchdog timeout → SIGTERM
 - 🟢 User-initiated restart (rare on auto-notification)
@@ -326,3 +328,4 @@ See `references/cron-source-investigation.md` for the full investigative workflo
 - `hermes-agent` — gateway CLI commands (start/stop/status)
 - `linux-server-audit` — post-audit cron maintenance for cleanup scripts
 - `gcp-operations` — GCP IP change monitoring cron scripts
+- `sing-box-vps` — WARP routing for Telegram connectivity on GCP
