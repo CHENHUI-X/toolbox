@@ -344,6 +344,14 @@ grep "polling restarted after network error" ~/.hermes/logs/gateway.log | wc -l
 
 改之前：每天断连 15~30 次 → 改之后：连续运行 29+ 小时无断连。
 
+### SOCKS5 封禁外部访问
+
+SOCKS5 端口（10808）无密码认证，公网开放后易被扫描器滥用。封禁方案：
+- iptables 规则：先放行 127.0.0.1，再 DROP 所有其他来源
+- 不能用 UFW 代替（UFW 是 stateful 的，已建立连接不受影响）
+
+详见 `references/socks5-block-external.md`。
+
 ### 注意事项
 
 - Cloudflare WARP 免费且流量不限量
@@ -471,9 +479,9 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
 2. Cloudflare SSL/TLS 设为 **Flexible**（CF→服务器走 HTTP）
 3. 因为 443 需要 root 权限，python 以 root 跑即可
 
-#### Subscription link delivery
+#### Subscription link delivery / Parker 用户偏好
 
-**用户偏好（Parker）：** 给订阅链接时**只发链接本身**，不要附带任何说明文字。直接给出 URL 即可。不要问"要不要试试"、"这个行了没"之类的废话。
+**Parker 的交付规则（适用于一切链接/推荐场景）：** 给订阅链接、商品链接、项目链接、优惠链接等**任何链接**时，**只发链接本身**，不要附带推荐理由、对比分析、询问"要不要试试"之类的废话。直接给出 URL 即可。如果用户问"有没有X"，直接回答"有/没有"并给链接，不要展开对比表或优势说明。用户要了解自然会追问。
 
 ```
 http://域名:443
@@ -586,16 +594,74 @@ ss -tnp | grep -E "33741|2096|65083|53900|29624" | wc -l
 cat /proc/net/dev | grep ens4 | awk '{print "出站: " $10/1024/1024/1024 " GB"}'
 ```
 
-## 每日流量自动报告
+## 每日安全+流量自动报告
 
-`scripts/traffic-report.py` 生成简洁的中文日报，输出到 stdout，适合 cron 定时推送。
+`scripts/traffic-report.py` 生成中文安全+流量报告（含日/周/月统计 + 端口扫描 + 异常检测），输出到 stdout，适合 cron `no_agent=true` 定时推送。
+
+### 报告内容
+
+```
+🛡️ 每日安全+流量报告 — 2026-07-24 19:57
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📡 【流量统计】
+  📅 本日 (0.02 GB ↓ / 0.01 GB ↑)
+  📆 本周 (0.05 GB ↓ / 0.03 GB ↑)
+  📊 本月 (0.05 GB ↓ / 0.03 GB ↑)
+  💾 累计 (1107.93 GB ↓ / 513.94 GB ↑)
+
+🔌 【端口状态】
+  ✅ 无异常端口
+  ✅ UFW规则干净
+
+🔗 【连接安全】
+  代理端口连接: 0 个
+  ✅ SOCKS5外部: 无异常连接
+
+🟢 【系统状态】
+  网关运行: 2-03:35:07
+  Telegram断连: 0 次/日
+  内存: 421Mi / 955Mi
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### 功能模块
+
+| 模块 | 检测内容 |
+|------|---------|
+| 📡 流量统计 | 本日/本周/本月/累计 入站+出站（GB），跨日自动跟踪 |
+| 🔌 端口状态 | 对比已知端口白名单，报告异常端口和多余 UFW 规则 |
+| 🔗 连接安全 | 代理端口连接数 + SOCKS5 外部连接检测 |
+| 🟢 系统状态 | 网关运行时间、Telegram 断连次数、内存占用 |
+
+### 状态持久化
+
+脚本用 `~/.hermes/data/traffic-state.json` 保存网卡流量快照，跨日/跨周/跨月自动对齐：
+- **日流量** = 上次运行到本次运行的增量
+- **周流量** = 周一重置起点
+- **月流量** = 每月1号重置起点
+
+### KNOWN_PORTS 白名单维护
+
+脚本内置白名单决定什么算"异常端口"。新增正常端口时同步编辑脚本内的 `KNOWN_PORTS` 字典：
+
+```python
+KNOWN_PORTS = {
+    22: "SSH", 80: "HTTP", 443: "订阅服务",
+    33741: "VLESS 代理", 2096: "VMess 代理",
+    65083: "Hysteria2 代理", 53900: "TUIC 代理",
+    29624: "AnyTLS 代理", 8644: "SSH 本地转发",
+    8645: "Hermes 网关", 10808: "SOCKS5 本地代理",
+    53: "DNS (systemd-resolved)",
+}
+```
 
 ### 部署（Hermes cron，免 LLM 费用）
 
 ```bash
 cronjob action=create \
-  schedule="0 23 * * *" \
-  name="代理流量日报" \
+  schedule="30 10 * * *" \
+  name="代理安全+流量日报" \
   script="traffic-report.py" \
   no_agent=true \
   deliver=origin
@@ -603,21 +669,11 @@ cronjob action=create \
 
 - `no_agent=true`: 只跑脚本 + 送 stdout，无 LLM 调用成本
 - `deliver=origin`: 自动发到当前聊天
+- `schedule="30 10 * * *"`: 每天北京时间 10:30（系统已是 Asia/Shanghai）
 
-### 日报内容
+### 文件位置
 
-```
-📊 代理流量日报 — 2026-07-23 23:49:08
-━━━━━━━━━━━━━━━━━━━━
-📡 本月累计流量：
-   入站: 1107.31 GB
-   出站: 513.67 GB
-🔌 代理端口连接数: 2
-🟢 网关运行时间: 1-07:26:25
-📱 Telegram今日断连: 1 次
-💾 内存: 469Mi / 955Mi
-━━━━━━━━━━━━━━━━━━━━
-```
+当前运行的脚本在 `/root/.hermes/scripts/traffic-report.py`（该文件比 skill 目录下的副本更新，是权威版本）。Skill 目录下的 `scripts/traffic-report.py` 是发布时存档，内容可能落后于运行版。
 
 ## 参考
 
