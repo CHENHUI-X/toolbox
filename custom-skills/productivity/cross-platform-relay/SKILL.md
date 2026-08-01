@@ -219,6 +219,7 @@ Similarly, if the wife says "问问爸爸xxx", forward to the husband as:
 5. **Do not auto-answer** on behalf of the recipient
 6. **Bidirectional symmetry** — same rules apply in both directions
 7. **When `hermes send` or `curl` is blocked** by terminal security controls (token redaction, command blocking), use the **Python heredoc technique** to call the platform API directly. See skill `cross-platform-relay` file `references/telegram-relay-heredoc.md` for the exact pattern — reads the bot token from `.env` inside the Python heredoc, avoiding shell-level redaction. (View with: `skill_view(name='cross-platform-relay', file_path='references/telegram-relay-heredoc.md')`)
+8. **WeChat sends: prefer direct platform API over the CLI when the CLI times out.** `hermes send --to weixin` (no `-q`, timeout=120) usually works; `-q` mode times out silently. When the CLI is flaky, use `send_weixin_direct` from `gateway/platforms/weixin.py` for structured errors. Never retry a rate-limited weixin send in a burst — wait 60-90s, retry once (the breaker extends on every hit). See `references/weixin-send-reliability.md` for the copy-paste script and error-code table.
 
 ## Platform-Specific Behavior Modes
 
