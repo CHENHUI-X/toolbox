@@ -489,6 +489,12 @@ http://域名:443
 https://域名/nx4hspzb  # 如果保留了路径保护
 ```
 
+**给 Parker 的命令必须单行** — 多行/反斜杠续行会被他的终端自动执行（用户原话"一行给我 不要换行 不然自动执行了 以后记住"）。所有发给用户的 shell/PowerShell 命令写成一行。
+
+**⚠️ Telegram 会打码 IP 字符串** — 发含 `0.0.0.0/0` 的命令，Telegram 自动替换成 `[IP]/0`，用户复制过去就是错的。规避：gcloud 命令省略 `--source-ranges`（默认就是 0.0.0.0/0），或让用户用 Cloud Shell/网页控制台。
+
+**PowerShell 逗号是数组分隔符** — `--allow "udp:65083,udp:53900"` 必须加引号，否则 gcloud 报 `received [udp:65083 udp:53900]`。
+
 ## 凭据轮换（清理蹭流用户）
 
 sing-box 配置对外开放了代理端口后，订阅链接外泄会导致其他人蹭流量、GCP 出站费用飙升。实测月出站 ~500GB，入站 ~1TB，GCP 出站按 $0.12/GB 计会产生 ~$60+/月的费用。
@@ -496,6 +502,7 @@ sing-box 配置对外开放了代理端口后，订阅链接外泄会导致其�
 ### Pitfalls
 
 - **订阅服务器会挂起** — sb.json 轮换后，`subscription-server.py`（端口 8888）可能因旧连接卡住而停止响应。Clash 端刷新订阅会拿到旧配置或空响应。**必须重启订阅服务：** `pkill -f subscription-server.py && sleep 1 && python3 /root/.hermes/scripts/subscription-server.py 8888 &`
+- **轮换后蹭流客户端疯狂重试 → 30s 超时 ERROR 风暴 → journal 爆盘 → Telegram 网关断联** — 换凭据后旧客户端仍自动重连，每次 30 秒超时刷 ERROR，journal 可涨到 2.9GB，资源挤压导致 Telegram WARP 通道周期性断联（每 6-7 分钟）。**必须封禁来源 IP + journal 限容**，完整流程见 `references/leecher-retry-storm-blocking.md`
 - **订阅 YAML 也要同步更新** — 只改 `sb.json` 不够，`/etc/s-box/custom-sub.yaml`（Clash/Stash 拉的文件）也要同步改所有协议的 `uuid/password/public-key/short-id/token`。否则客户端刷新后还是旧凭据连不上。
 - **端口没换，有心人仍可拉订阅** — 只换密钥不换端口，知道 IP:端口的旧用户重新拉订阅就能拿到新配置。要彻底封杀需要：换端口 + 加路径密码（如 `/custom.yaml` → `/aB3xK9mW.yaml`）。
 - **Hysteria2 和 AnyTLS 的密码字段在 sb.json 里用的是旧 UUID** — yonggekkk 脚本生成的 hy2 和 anytls 密码就是 UUID 格式。轮换时需要注意这两个端口用的密码必须跟 UUID 同步，或者统一用一个独立密码（推荐独立密码 + 与 UUID 保持不同）。
