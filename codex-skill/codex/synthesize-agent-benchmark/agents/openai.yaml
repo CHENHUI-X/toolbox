@@ -1,0 +1,4 @@
+interface:
+  display_name: "智能体评测数据构造"
+  short_description: "先探索 Agent，再生成自洽的 sample 与 formal JSONL"
+  default_prompt: "使用 $synthesize-agent-benchmark 探索当前 Agent 或业务场景。先不要生成数据；读取相关 Prompt、工具、规则和代码后，用中文说明能力、具体场景与待确认问题，等我确认后再生成 sample JSONL。"

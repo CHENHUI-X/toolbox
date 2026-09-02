@@ -1,0 +1,4 @@
+interface:
+  display_name: "规划-执行编排"
+  short_description: "按四象限分配规划、复杂执行、简单实现与机械化任务。"
+  default_prompt: "使用 $plan-execute-orchestrator，先展示四象限模型路由；确认后用 Sol 规划、Terra 处理复杂执行、Luna 处理简单或机械化任务。"
