@@ -495,6 +495,10 @@ https://域名/nx4hspzb  # 如果保留了路径保护
 
 **PowerShell 逗号是数组分隔符** — `--allow "udp:65083,udp:53900"` 必须加引号，否则 gcloud 报 `received [udp:65083 udp:53900]`。
 
+## 多机部署（第二台 VPS）
+
+在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信的完整流程（脚本非交互安装、密钥同步字段表、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、实测清单）：见 `references/multi-server-deployment.md`。
+
 ## 凭据轮换（清理蹭流用户）
 
 sing-box 配置对外开放了代理端口后，订阅链接外泄会导致其他人蹭流量、GCP 出站费用飙升。实测月出站 ~500GB，入站 ~1TB，GCP 出站按 $0.12/GB 计会产生 ~$60+/月的费用。
@@ -687,6 +691,12 @@ cronjob action=create \
 - `references/yonggekkk-sing-box-yg.md` — Full repo reference, file structure, video tutorials
 - `references/tuic-version-field.md` — Tuic version compatibility error transcript (sing-box 1.13.x)
 - `references/socks5-inbound-telegram.md` — Running sing-box as a SOCKS5 proxy for direct Telegram/app use, without external clients. **Includes WARP routing pattern for improving GCP→Telegram network stability.**
+
+## 检查钩子补充坑（详见 sing-box-node-check 技能 + multi-server-deployment.md 第七节）
+
+- **scp 覆盖会冲掉远端已适配的检查脚本**——先在本地改好适配项再传，或传完重新 sed 并跑一遍确认
+- **用户区分"订阅"与"复写规则"**：第二台机器交付精简纯订阅（proxies+groups+rules），server 字段全域名零裸 IP，订阅服务 80/443 双端口（用户复制链接常不带 :443，只开 443 会误报超时）
+- **CF API Token 在 ~/.cloudflare_token.txt**（Edit zone DNS，作用域 eosphor.dpdns.org）：给新机器加子域名 A 记录用 API 搞定，不用麻烦用户
 
 ## GCP Ephemeral IP Change Handling
 
