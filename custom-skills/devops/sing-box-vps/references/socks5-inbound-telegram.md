@@ -279,6 +279,7 @@ Settings → Data and Storage → Proxy → Add Proxy → SOCKS5
 
 - **无 SOCKS5 加密** — SOCKS5 协议本身没有传输层加密。如果担心流量被中间人窥探，建议走 TLS 隧道（如 Nginx 反向代理 + TLS），或者接受在服务器+客户端之间有信任的网络（如自建 VPS 直连）。
 - **端口别冲突** — 10808 是常用 SOCKS5 端口，确认没有被其他服务占用。
-- **GCP 双防火墙** — 即使 VM 内 iptables 开了，GCP 云防火墙层面也要放行。参见 `gcp-operations` skill 的防火墙章节。
+- **GCP 双防火墙** —即使 VM 内 iptables 开了，GCP 云防火墙层面也要放行。参见 `gcp-operations` skill 的防火墙章节。
 - **用户密码建议去掉** — 临时设备用无密码更方便。如果担心被扫描，改一个非标准端口即可。
 - **域名规则顺序** — `direct` 兜底规则必须是最后一条，否则域名分流规则不生效。
+- **⛔ TELEGRAM_PROXY 是机器拓扑绑定的，不能跨机照抄** — 这条配置只在“本机 sing-box 有 10808 socks 入站 + WARP 出站”的机器上成立。把它随 .env 同步到没有 10808 入站的新机器，Hermes gateway 的 Telegram 连接会全部 httpx ConnectError（8次重试全挂），而同机 shell 里 curl/httpx 直连 TG 完全正常——这种“shell 通但 gateway 进程挂”的劈叉现象，第一件事查目标机器 .env 里照抄来的代理变量。美国/欧洲机器直连 TG 本来就通，删掉 TELEGRAM_PROXY 重启 gateway 即恢复（成功标志：gateway.log 出现 `set_my_commands OK`）。完整案例见 multi-server-deployment.md 第九节。

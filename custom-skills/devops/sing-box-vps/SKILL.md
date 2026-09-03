@@ -483,6 +483,8 @@ class SubHandler(http.server.BaseHTTPRequestHandler):
 
 **Parker 的交付规则（适用于一切链接/推荐场景）：** 给订阅链接、商品链接、项目链接、优惠链接等**任何链接**时，**只发链接本身**，不要附带推荐理由、对比分析、询问"要不要试试"之类的废话。直接给出 URL 即可。如果用户问"有没有X"，直接回答"有/没有"并给链接，不要展开对比表或优势说明。用户要了解自然会追问。
 
+**代写转发文案同理**：让写工单/邮件/话术让他转发时，用户说"只回复内容，其他啥也别加"就是字面意思——正文直接输出，不加主题行、不加"好的/以下是"前后语、不加说明（主题行只有单独要时才给）。
+
 ```
 http://域名:443
 # 或
@@ -497,7 +499,7 @@ https://域名/nx4hspzb  # 如果保留了路径保护
 
 ## 多机部署（第二台 VPS）
 
-在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信的完整流程（脚本非交互安装、密钥同步字段表、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、实测清单）：见 `references/multi-server-deployment.md`。
+在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信 / 全客户端多格式订阅交付的完整流程（脚本非交互安装、密钥同步字段表、Reality 公钥配对验证、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、精简订阅 vs 复写规则、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重、base64/sing-box/Surfboard 多格式生成、subconverter 弃用原因）：见 `references/multi-server-deployment.md`。
 
 ## 凭据轮换（清理蹭流用户）
 
@@ -691,12 +693,27 @@ cronjob action=create \
 - `references/yonggekkk-sing-box-yg.md` — Full repo reference, file structure, video tutorials
 - `references/tuic-version-field.md` — Tuic version compatibility error transcript (sing-box 1.13.x)
 - `references/socks5-inbound-telegram.md` — Running sing-box as a SOCKS5 proxy for direct Telegram/app use, without external clients. **Includes WARP routing pattern for improving GCP→Telegram network stability.**
+- `references/ip-geolocation-correction.md` — IP 广播导致 GEO 库国家记录错误的自助纠错流程（MaxMind 程序化提交、实测物理位置、工单文案要素）
+- `references/multi-server-deployment.md` — 多机部署全流程：密钥统一、SSH 反向隧道、peer 互备、多格式订阅交付（Clash/base64/sing-box/Surfboard）、ACL4SSR 分流、第二台机器接 TG bot、Syncthing 双脑实时记忆互通、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重
 
 ## 检查钩子补充坑（详见 sing-box-node-check 技能 + multi-server-deployment.md 第七节）
 
 - **scp 覆盖会冲掉远端已适配的检查脚本**——先在本地改好适配项再传，或传完重新 sed 并跑一遍确认
 - **用户区分"订阅"与"复写规则"**：第二台机器交付精简纯订阅（proxies+groups+rules），server 字段全域名零裸 IP，订阅服务 80/443 双端口（用户复制链接常不带 :443，只开 443 会误报超时）
 - **CF API Token 在 ~/.cloudflare_token.txt**（Edit zone DNS，作用域 eosphor.dpdns.org）：给新机器加子域名 A 记录用 API 搞定，不用麻烦用户
+
+## 分流规则方案（2026-09-02 实战定稿）
+
+用户点名要 ACL4SSR 风格的规则（订阅转换站同款），方案演进与坑：
+
+- **首选：rule-providers 引用 ACL4SSR 碎片**（订阅小、客户端自动更新、Stash 规则页可点开看明细）：
+  - 碎片源 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/{name}.list`，behavior 用 `classical`
+  - 标准顺序：LocalAreaNetwork→DIRECT、BanAD/BanProgramAD→REJECT、ChinaDomain/ChinaCompanyIp/ChinaIp/GoogleCN→DIRECT、国外碎片（ProxyGFWlist/ProxyLite/Telegram/Netflix）→节点组、MATCH 兜底→节点组
+  - 分组加一个 `♻️ 自动选择`（url-test）挂在 select 组首位
+- **内联大规则集（Loyalsoldier 15 万条）已废弃**：订阅 5MB+，且从 payload YAML 手转规则行极易出格式错误（`payload:,` 残留、引号拼接坏行），客户端直接解析失败
+- **用户对规则明细的关注点**：他要在 Stash 分流页看到"具体哪个域名/IP 走哪"——RULE-SET 远程引用满足此需求（客户端下载后可见），不要因此误改回内联
+- **RULE-SET 无裸 IP 例外**：节点 server 字段仍全用域名；订阅整体零裸 IP 是硬性要求
+- 节点命名规范：`🇺🇸 洛杉矶 | VLESS`（国旗+真实城市+协议）。⚠️ 商家宣传的机房国家可能是 IP 广播假象——用 TCP 握手延迟实测物理位置（俄勒冈→目标 36ms=美西，≠波兰的 180ms+），以实测为准命名
 
 ## GCP Ephemeral IP Change Handling
 

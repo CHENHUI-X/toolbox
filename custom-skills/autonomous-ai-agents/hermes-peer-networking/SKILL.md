@@ -1,6 +1,6 @@
 ---
 name: hermes-peer-networking
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 description: "Use when linking Hermes gateways via peer/A2A networking."
@@ -78,8 +78,17 @@ metadata:
 3. **配置同步**：本机 `tar czf /tmp/h.tgz -C /root/.hermes config.yaml .env` → scp → 新机解包到 `/root/.hermes/`，`chmod 600 .env`
 4. **验证**：`hermes chat -q '回复两个字：正常'` 看回复；模型以实际渠道响应为准
 
+## peer dm 超时 ≠ 通道故障（易误判）
+
+对方 agent 正在处理用户的 TG 对话时（单并发设计），peer dm 请求会排队——session 里 90s 超时是外层 subprocess 限制太短，peer dm 自身 DM_TIMEOUT_S=600（10分钟）。区分方法：直接 `curl http://<对端>:9901/health`（通道层面），通则只是排队，等一会或换长 timeout 重试。反过来要让对方主动 call 自己时，直接让它执行 `hermes peer dm gcp1 '...'`，实测双方都能收到（双向闭环）。
+
+另外：
+- **向用户报告状态前必须真验证**——曾只看 config.yaml 就声称“全部切过去了”，实际 fallback 到 deepseek 数天，被用户驳斥。config 写入 ≠ 实际生效；模型看 sessions 表，服务看端口+health，互通看 peer dm 闭环
+- **多格式订阅交付**：用户点破“stash/clash/冲浪板订阅格式都不一样，应分别创建”——单一 Clash YAML 不够。按客户端出格式：Clash YAML（Stash/Meta）+ base64 链接包（Shadowrocket/v2rayN）+ sing-box JSON（官方客户端，1.13 语法四坑：urltest interval 字符串/无 outbound DNS 规则/需 default_domain_resolver/reality 需 utls）+ Surfboard INI（仅 vmess，内核不支持新协议）。subconverter v0.9.0 不认新协议（10 节点只转出 1 个 vmess），已弃用
+
 ## 相关技能
 
 - `model-switch-playbook` — 网关重启/模型切换细节（用户自有，未 curator 托管）
 - `sing-box-node-check` — 节点变更检查（含云防火墙坑，用户自有）
+- `sing-box-vps` 的 `references/multi-server-deployment.md` — 完整部署实录 + 多格式订阅
 - 详细踩坑实录见 `references/session-gcp-aws-peer-setup.md`
