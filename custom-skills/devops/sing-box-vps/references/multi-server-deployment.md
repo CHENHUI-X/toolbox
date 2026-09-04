@@ -220,6 +220,23 @@ FASTNET 这类商家的 IP 不是终身的——会整段迁移到 DDoS 防护�
 - **subconverter v0.9.0 弃用**：自建后测试发现它不认识 vless-reality/tuic/hy2/anytls（10 节点只转出 1 个 vmess），且 clash/surfboard 输出被 400KB ACL 模板撑爆。现代协议场景直接手写各格式生成器，比 subconverter 靠谱
 - 两台机器的订阅服务都要加全套 PATH_MAP（本机 + QQG），QQG 的 FILE_PATH 指 aws-sub.yaml
 
+## 十七、traffic-report 日报多机适配坑（QQG 实战）
+
+把主机的 traffic-report.py 移植到第二台机器，硬编码点逐个改：
+
+1. **网卡名**：GCP 是 ens4，其他商家常是 eth0（`ls /sys/class/net/`确认）
+2. **KNOWN_PORTS 换目标机端口表**：必须包含全部代理端口——⚠️ **UDP 代理端口（hy2/tuic）必须加进去**，否则每天误报"UFW多余规则"（hy2/tuic 是 ss -tulnp 才能看到的 UDP 监听）
+3. **端口扫描改 `ss -tulnp`**（原脚本 -tlnp 只看 TCP，漏 UDP 监听）
+4. **SOCKS5 检查段整个删掉**：脚本里 socks_iptables/socks_conns/socks_blocked 三处引用（QQG 无 SOCKS5 服务，注释赋值行会留下未定义引用 NameError）
+5. **proxy_ports 列表**也要换目标机端口
+6. **用 ufw status 的 ALLOW 行提取端口时已剥 /udp 后缀**（`parts[0].split("/")[0]`），别重复处理
+
+推送脚本：生成报告 + `curl TG sendMessage`（用本机 bot token/chat_id）一条龙 shell，cron 每天 10:45（与主机 10:30 错开不轰炸）。跨机传脚本用本地生成→scp，同订阅文件的教训。
+
+## 十八、时区统一
+
+第二台机器默认 UTC：`timedatectl set-timezone Asia/Shanghai` 后重启 sing-box/订阅服务/gateway（日志时间戳随新时区）。cron 定时（如互备监控 0 点/12 点）自动跟随新时区。
+
 ## 相关文件
 - 部署记录：知识库 环境配置/AWS新机器代理部署.md
 - 相关技能：sing-box-node-check（变更后检查清单）、hermes-agent（peer/api_server）

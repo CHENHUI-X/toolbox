@@ -86,9 +86,26 @@ metadata:
 - **向用户报告状态前必须真验证**——曾只看 config.yaml 就声称“全部切过去了”，实际 fallback 到 deepseek 数天，被用户驳斥。config 写入 ≠ 实际生效；模型看 sessions 表，服务看端口+health，互通看 peer dm 闭环
 - **多格式订阅交付**：用户点破“stash/clash/冲浪板订阅格式都不一样，应分别创建”——单一 Clash YAML 不够。按客户端出格式：Clash YAML（Stash/Meta）+ base64 链接包（Shadowrocket/v2rayN）+ sing-box JSON（官方客户端，1.13 语法四坑：urltest interval 字符串/无 outbound DNS 规则/需 default_domain_resolver/reality 需 utls）+ Surfboard INI（仅 vmess，内核不支持新协议）。subconverter v0.9.0 不认新协议（10 节点只转出 1 个 vmess），已弃用
 
+## IP 迁移（2026-09-03，FASTNET 主动迁移）
+
+- 商家迁 IP（195.72.189.146 → 50.114.172.17，DDoS 防护线路）导致整机失联（22/9901 全 timeout）——先区分"服务挂"vs"机器挂"：22 都不通 = 机器级
+- 修复清单：CF DNS API 改 A 记录（域名化是救命设计，客户端零操作）→ a2a-tunnel sed 新 IP → peer add gcp2 新 URL → merged-sub-gen/brain-sync sed SSH 目标 → QQG 侧 peer gcp1 走回环隧道无需改
+- 新 IP 附带红利：GEO 全库一致 US（旧 IP 的 PL 混乱记录消失），AI 风控全绿
+- 双向验证：正向 curl health + 让二号执行 `hermes peer dm gcp1 '...'`（二号会转述主机回复，闭环证据）
+- 认知同步：互通状态+新 IP 写进 QQG 的 MEMORY.md（SSH 直写，Syncthing 反向同步回本机），避免二号再说"没通"
+
+## streaming 截断（2026-09-03，"发半个节儿"）
+
+- 症状：TG 长回复发一半就断，日志 `final stream delivery not confirmed` + `Flushing text batch` 高频
+- 根因：`display.streaming: true` 流式分段发送，某段 ack 丢失 → 丢弃剩余
+- 修复：`display.streaming=false` + `agent.streaming=false`，重启生效
+- 坑1：`hermes config set display.streaming false` 误插到 personalities 段尾产生重复键（YAML 重复键行为未定义）→ 用 python yaml 修复+验证
+- 坑2：只改了主机，QQG 漏改——用户第二天报告二号还在发半个。**多机配置变更要清单化，每台都要改**
+- 坑3：QQG 时区是 UTC（cron/日志/agent 时间感知全偏）→ `timedatectl set-timezone Asia/Shanghai` + 重启服务
+
 ## 相关技能
 
 - `model-switch-playbook` — 网关重启/模型切换细节（用户自有，未 curator 托管）
 - `sing-box-node-check` — 节点变更检查（含云防火墙坑，用户自有）
 - `sing-box-vps` 的 `references/multi-server-deployment.md` — 完整部署实录 + 多格式订阅
-- 详细踩坑实录见 `references/session-gcp-aws-peer-setup.md`
+- 详细踩坑实录见 `references/session-gcp-aws-peer-setup.md`（含 IP 迁移实录）
