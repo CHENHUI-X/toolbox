@@ -1,6 +1,6 @@
 ---
 name: gcp-subscription-auto-ip-update
-description: GCP 订阅 IP 自动更新 — IP 变更时自动修正本地配置（clmi.yaml、jhsub.txt）并通过本地 HTTP 服务 + GitHub 推送分发订阅，适配 Stash 覆写
+description: GCP 订阅 IP 自动更新 — IP 变更时自动更新 DDNS + 重新生成分发订阅（custom-sub.yaml 等）并推送 GitHub，通过本地 HTTP 服务分发，适配 Stash 覆写
 category: devops
 ---
 
@@ -34,7 +34,7 @@ IP 没变时静默，变了才执行完整链路。不再有定期轮询，减�
 
 | 文件 | 用途 |
 |------|------|
-| `/root/.hermes/scripts/gcp-ip-check.sh` | IP 检测入口，cron 每30分钟触发 |
+| `/root/.hermes/scripts/gcp-ip-check.sh` | IP 检测入口（仅开机由 gcp-ip-check-boot.service 触发） |
 | `/root/.hermes/scripts/push-sub-to-github.py` | 生成 YAML → 推送 GitHub + 写本地副本 |
 | `/root/.hermes/scripts/cf-update-dns.py` | Cloudflare DNS A 记录 DDNS 更新 |
 | `/root/.hermes/scripts/subscription-server.py` | 本机 HTTP 服务，serve custom-sub.yaml |
@@ -44,9 +44,9 @@ IP 没变时静默，变了才执行完整链路。不再有定期轮询，减�
 | `/root/.cloudflare_token.txt` | Cloudflare API Token（DNS:Edit 权限） |
 | `/etc/cron.d/gcp-ip-check` | 30 分钟 cron（IP 检测） |
 | `/etc/cron.d/hermes-skills-backup` | 每天 10:00 UTC cron（skills 备份） |
-| `/etc/s-box/custom-sub.yaml` | Stash 实际拉取的订阅文件（override 格式） |
-| `/etc/s-box/clmi.yaml` | 完整 Clash Meta 配置 |
-| `/etc/s-box/jhsub.txt` | V2Ray share link 格式订阅 |
+| `/etc/s-box/custom-sub.yaml` | Stash 实际拉取的订阅文件（override 格式，/nx4hspzb 端点） |
+| `/etc/s-box/sub-links-plain.txt` `sub-links-b64.txt` `sub-singbox.json` `sub-surfboard.ini` `merged-sub.yaml` | 订阅服务其余分发文件（全表见 subscription-server.py 的 PATH_MAP） |
+| ~~`/etc/s-box/clmi.yaml` `/etc/s-box/jhsub.txt`~~ | **已归档** 2026-09-06 → /root/net-tune/legacy-backup/（含 8-29 旧 Reality 钥，勿再引用） |
 | `/root/toolbox/` | 克隆的 toolbox 仓库本地副本 |
 
 ## IP 变更完整流程
@@ -60,12 +60,8 @@ if [ "$CURRENT_IP" != "$LAST_IP" ]; then
     echo "$CURRENT_IP" > /etc/s-box/server_ip.log
     echo "$CURRENT_IP" > /etc/s-box/server_ipcl.log
 
-    # 更新本地 clmi.yaml（VLESS 节点 server 字段）
-    sed -i "s/server: $LAST_IP/server: $CURRENT_IP/g" /etc/s-box/clmi.yaml
-
-    # 更新本地 jhsub.txt / jhdy.txt（vless:// 链接中的 IP）
-    sed -i "s/@$LAST_IP:/@$CURRENT_IP:/g" /etc/s-box/jhsub.txt
-    sed -i "s/@$LAST_IP:/@$CURRENT_IP:/g" /etc/s-box/jhdy.txt
+    # ⚠️ 2026-09 起：不再本地 sed clmi.yaml / jhsub.txt / jhdy.txt（均已归档）
+    # 节点全部用 DDNS 域名，订阅里不嵌裸 IP，IP 同步只靠下面这步
 
     # 更新 DDNS — 必须传 IP 参数，否则静默失败！
     /root/.hermes/scripts/cf-update-dns.py "$CURRENT_IP"
@@ -90,9 +86,9 @@ fi
 
 ### subscription-server.service
 
-- Python http.server，绑定 `0.0.0.0:8888`
-- 仅响应 `/custom.yaml`、`/clmi.yaml`、`/sub`、`/health`
-- 其他路径返回纯文本提示（含订阅地址）
+- Python http.server，绑定 `0.0.0.0:443`（端口由启动参数传入）
+- PATH_MAP：/nx4hspzb→custom-sub.yaml、/merged9k2m→merged-sub.yaml、/sub-b64→sub-links-b64.txt、/sub-links→sub-links-plain.txt、/sub-sb→sub-singbox.json、/sub-surf→sub-surfboard.ini
+- 密码保护：须 `?key=<sub-key 文件内容>`，否则 401
 - systemd 管理，自动重启
 
 ```ini
@@ -112,7 +108,7 @@ RestartSec=10
 
 ```
 类型: HTTP
-URL: http://google.cloud.eosphor.dpdns.org:8888/custom.yaml
+URL: http://google.cloud.eosphor.dpdns.org:443/nx4hspzb?key=<sub-key内容>
 更新间隔: 按需
 ```
 
@@ -136,8 +132,9 @@ export GH_TOKEN=$(cat /root/.github_token.txt | tr -d '\n')
 python3 /root/.hermes/scripts/push-sub-to-github.py
 
 # 测试 HTTP 服务
-curl -s http://localhost:8888/custom.yaml | head -10
-curl -s http://google.cloud.eosphor.dpdns.org:8888/custom.yaml | head -5
+K=$(cat /etc/s-box/sub-key)
+curl -s "http://localhost:443/nx4hspzb?key=$K" | head -10
+curl -s "http://google.cloud.eosphor.dpdns.org:443/nx4hspzb?key=$K" | head -5
 ```
 
 ## 安装/重置 HTTP 服务
@@ -177,10 +174,10 @@ journalctl -u subscription-server.service --no-pager -n 20
 
 - **token 安全问题**：`/root/.github_token.txt` 中的 PAT 涉及写入权限，注意文件权限
 - **GitHub PAT auth failure** — when GitHub API returns 401 `Bad credentials` even though the token was correctly generated, the most common causes (in order): (1) token was created for a different GitHub account, (2) fine-grained token permissions didn't include `Contents: Read and write`, (3) token needs SSO authorization. Classic tokens (`ghp_...`) with `repo` scope are more reliable than fine-grained tokens (`github_pat_...`) for automation. To test: `curl -u "username:token" https://api.github.com/user` — if 200 but write returns 404, it's a permission issue.
-- clmi.yaml 只有 VLESS 节点的 server 是动态 IP，其他 4 个节点用 DDNS 域名（google.cloud.eosphor.dpdns.org）固定不变
-- jhsub.txt 中只有 vless:// 链接包含实际 IP，其他协议用域名
-- cron 每 30 分钟跑一次，IP 不变时完全静默
-- 服务端口 8888 不对外暴露敏感信息，只有 YAML 文件可下载
+- 2026-09-06 大扫除：clmi.yaml / jhsub.txt / jhdy.txt / sbox.json / vl_reality.txt / an.txt / hy2.txt / tuic5.txt / vm_ws_tls.txt 及各自 .bak 已归档至 /root/net-tune/legacy-backup/。原因：8-29 旧 Reality 钥（pbk=DO1zSn.../sid=0d682811）和过期凭据，真值以 sb.json 为准（pbk=UHnerZD.../sid=e03f8182，由私钥 X25519 推导验证）
+- 当前节点全部用 DDNS 域名（google.cloud.eosphor.dpdns.org），订阅里不嵌裸 IP
+- cron 每 30 分钟已删除，仅开机触发；IP 不变时完全静默
+- 服务端口 443，?key= 鉴权，无 key 一律 401
 
 ## Skills Backup to GitHub
 

@@ -17,6 +17,7 @@ tags: [sing-box, proxy, verification, firewall, udp, gcp]
 - 证书续期 / 更换
 - 重启 sing-box 或订阅服务
 - 订阅文件更新
+- **⚠️ sb.json 被任何外部方式改动（脚本重跑/另一台机器改动/yg脚本重置）——必跑！**
 
 ## 检查清单（按顺序）
 
@@ -103,6 +104,7 @@ curl -s "http://127.0.0.1:443/nx4hspzb?key=xch2422" | head -5
 
 ## 已知坑汇总
 
+0. **⚠️ sb.json 被外部改动后必跑全套检查**（2026-09-06 事故）：sing-box-yg 脚本重跑/二号机器改动/任何源重置，都会改 sb.json（如 Reality server_name 从 apple.com 变 itunes.apple.com）→ **订阅里的 sni/servername 就与服务端不匹配 → Reality 握手 x509 错误 → 全部静默不通**。修复方向：以 sb.json 当前值为准，同步改订阅。任何时候发现"上网不通"，第一步先 diff sb.json mtime 和订阅参数（sni/servername/uuid/password/公钥）。
 1. **VMess transport.path 嵌 UUID**：换 UUID 时 path 里的 UUID 不会自动变，必须手动同步（否则 VMess 静默失效）
 2. **TUIC 双凭据**：uuid + password 都要换
 3. **GCP 防火墙 TCP/UDP 分开**：放行 TCP 不代表 UDP 通

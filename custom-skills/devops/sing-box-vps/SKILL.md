@@ -695,12 +695,14 @@ cronjob action=create \
 - `references/socks5-inbound-telegram.md` — Running sing-box as a SOCKS5 proxy for direct Telegram/app use, without external clients. **Includes WARP routing pattern for improving GCP→Telegram network stability.**
 - `references/ip-geolocation-correction.md` — IP 广播导致 GEO 库国家记录错误的自助纠错流程（MaxMind 程序化提交、实测物理位置、工单文案要素）
 - `references/multi-server-deployment.md` — 多机部署全流程：密钥统一、SSH 反向隧道、peer 互备、多格式订阅交付（Clash/base64/sing-box/Surfboard）、ACL4SSR 分流、第二台机器接 TG bot、Syncthing 双脑实时记忆互通、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重
+- `references/subscription-field-truth.md` — sb.json→Stash 订阅逐字段真值映射（vmess path/tls 各机差异、自签证书 skip-cert-verify、QQG Reality sni 限制、TUIC 测试假阴性、全量矩阵测试模板、sync-all-subs.py 同步器）——改订阅前必读，杜绝硬编码
 
 ## 检查钩子补充坑（详见 sing-box-node-check 技能 + multi-server-deployment.md 第七节）
 
 - **scp 覆盖会冲掉远端已适配的检查脚本**——先在本地改好适配项再传，或传完重新 sed 并跑一遍确认
 - **用户区分"订阅"与"复写规则"**：第二台机器交付精简纯订阅（proxies+groups+rules），server 字段全域名零裸 IP，订阅服务 80/443 双端口（用户复制链接常不带 :443，只开 443 会误报超时）
 - **CF API Token 在 ~/.cloudflare_token.txt**（Edit zone DNS，作用域 eosphor.dpdns.org）：给新机器加子域名 A 记录用 API 搞定，不用麻烦用户
+- **⛔ 订阅字段零硬编码 + 修完跑全量矩阵（2026-09-07 用户暴怒铁律"为啥每次都犯错，不能一次性修好"）**：生成/修订阅时每个字段从服务端 sb.json 读真值（vmess path 带 -vm 后缀+early-data、vmess tls 各机不同 GCP有/QQG无、自签证书必带 skip-cert-verify、QQG Reality sni=itunes.apple.com）；交付前必须对全部节点×协议跑真实端到端测试（临时 client + curl 204），只测刚改的一项=把下一个坑留给用户。逐字段真值映射表见 `references/subscription-field-truth.md`；一键同步器 `/root/.hermes/scripts/sync-all-subs.py`（真源=两台 sb.json→三份订阅→验证），QQG 的 aws-sub.yaml 禁手改
 
 ## 分流规则方案（2026-09-02 实战定稿）
 
