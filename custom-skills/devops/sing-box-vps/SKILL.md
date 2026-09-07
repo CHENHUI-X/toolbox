@@ -683,6 +683,7 @@ cronjob action=create \
 - `no_agent=true`: 只跑脚本 + 送 stdout，无 LLM 调用成本
 - `deliver=origin`: 自动发到当前聊天
 - `schedule="30 10 * * *"`: 每天北京时间 10:30（系统已是 Asia/Shanghai）
+- **定时推送部署后必须验证真实送达**：对照 cron 日志确认触发，并核验发送结果（如 TG sendMessage 的 ok 字段）；从 .env 取凭据要锚定唯一完整行——.env 经跨机同步/合并后常有重复键，前缀 grep 会静默取到错的那个（发成另一个 bot 或静默失败）
 
 ### 文件位置
 
@@ -716,6 +717,8 @@ cronjob action=create \
 - **用户对规则明细的关注点**：他要在 Stash 分流页看到"具体哪个域名/IP 走哪"——RULE-SET 远程引用满足此需求（客户端下载后可见），不要因此误改回内联
 - **RULE-SET 无裸 IP 例外**：节点 server 字段仍全用域名；订阅整体零裸 IP 是硬性要求
 - 节点命名规范：`🇺🇸 洛杉矶 | VLESS`（国旗+真实城市+协议）。⚠️ 商家宣传的机房国家可能是 IP 广播假象——用 TCP 握手延迟实测物理位置（俄勒冈→目标 36ms=美西，≠波兰的 180ms+），以实测为准命名
+- **订阅再生成必须携带完整分流块**：定稿的 ACL4SSR 结构（4 分组 + rule-providers + 规则序）作为脚本常量随节点一起输出，禁止在"临时/精简版"里降级成几条兜底规则——再生成正是分流静默回退的时刻，客户端只显示"全部走代理"且无人报错
+- **rule-provider 源 URL 逐个 curl 实测 200 再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律。重写订阅生成脚本时从本清单复制文件名，**禁止凭记忆重敲 URL**——已实测 200 的 8 个源（基路径 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/`）：`LocalAreaNetwork.list`、`BanAD.list`、`GoogleCN.list`、`ChinaDomain.list`、`ChinaCompanyIp.list`、`Download.list`、`Telegram.list`、`ProxyGFWlist.list`
 
 ## GCP Ephemeral IP Change Handling
 

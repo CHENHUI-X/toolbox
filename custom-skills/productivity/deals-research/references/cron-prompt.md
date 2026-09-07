@@ -1,6 +1,6 @@
 # Daily Deals Digest — Verified Cron Prompt
 
-Used by Hermes cron job `6d6f9537521d` (every day 09:00 CST, enabled_toolsets=["web"], deliver=origin). This prompt was iterated with the user after real failures: stale Black-Friday articles and the giffgaff mass-ban being recommended as new. Do not simplify the verification rules.
+Used by Hermes cron job `6590a0a5570f` (every day 09:00 CST, enabled_toolsets=["web"], deliver=origin). This prompt was iterated with the user after real failures: stale Black-Friday articles and the giffgaff mass-ban being recommended as new. Do not simplify the verification rules.
 
 ## Prompt body (copy verbatim when updating the job)
 
@@ -35,6 +35,11 @@ Used by Hermes cron job `6d6f9537521d` (every day 09:00 CST, enabled_toolsets=["
    - 优惠码没有官方出处的不收
    - 内容看起来像营销软文的（尤其小红书/百家号那种），要有独立来源佐证才收
 
+4. **库存/可购性验证（VPS/套餐类必做）**：
+   - 商家商店列表页的 "Order Now" 按钮不代表有货——WHMCS 等面板即使售罄也在列表页渲染下单按钮，列表页不显示任何库存状态。
+   - 推荐任何套餐前，逐款点进该套餐的产品详情页/直购链接（如 cart.php?a=add&pid=XX），确认没有 "Out of Stock" 且能进入配置/结账步骤，才算"在售可买"。
+   - 不能只看列表页，或转述他人"还有货"的说法。
+
 格式要求：
 - 按分类分块：📡 VPS / 📱 保号卡 / 🦙 羊毛
 - 每条信息：名称 → 价格/折扣 → 参与方式 → 链接（购买链接+教程链接）
@@ -49,4 +54,5 @@ Used by Hermes cron job `6d6f9537521d` (every day 09:00 CST, enabled_toolsets=["
 
 1. **v1** — no verification rules. User: "这些内容很多都过期了，你怎么验证？比如那个服务器什么黑5优惠，早他妈没了" → added 7-day freshness + publish-date checks.
 2. **v2** — added giffgaff-specific ban note. User: "Giffgaff 都被封了，你看啥呢" → added negative-risk search.
-3. **v3 (current)** — user clarified the principle: "不是不再推他了，而是你在搜索的时候，要多方面信息交叉验证" → replaced the giffgaff-only ban note with the general multi-source cross-verification protocol (≥2 independent sources, negative-info search, sanity checks, 宁可少而精).
+3. **v3** — user clarified the principle: "不是不再推他了，而是你在搜索的时候，要多方面信息交叉验证" → replaced the giffgaff-only ban note with the general multi-source cross-verification protocol (≥2 independent sources, negative-info search, sanity checks, 宁可少而精).
+4. **v4 (current)** — RackNerd Black-Friday plans were listed as 在售 while every VPS plan in the store was Out of Stock (WHMCS list pages always render Order Now) → added purchasability/stock verification (item 4 in the prompt) + `references/restock-monitoring.md`.

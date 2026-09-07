@@ -10,7 +10,7 @@ metadata:
 
 # Deals & Promo Research
 
-Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号卡, 薅羊毛 — either one-shot ("帮我找找XX优惠") or as the recurring daily digest cron (`6d6f9537521d`, every 9:00 CST).
+Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号卡, 薅羊毛 — either one-shot ("帮我找找XX优惠") or as the recurring daily digest cron (`6590a0a5570f`, every 9:00 CST).
 
 ## Core principles (user-mandated, non-negotiable)
 
@@ -20,6 +20,7 @@ Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号
 4. **不因一次失效就永久拉黑** — a provider that failed once is NOT blacklisted forever; re-verify every cycle. The principle is cross-verification, not permanent exclusion. (User: "不是不再推他了，而是多方面信息交叉验证".)
 5. **常识校验 (sanity)** — Absurdly-low prices (50%+ below market) are red flags; coupon codes without official provenance are dropped; marketing-fluff pieces (小红书/百家号 style) need independent corroboration.
 6. **宁可少而精** — 3 fresh verified items beat 10 stale ones.
+7. **可购性验证 (purchasability)** — A listed price is not a buyable plan. WHMCS-style storefronts render an "Order Now" button on every card even when the product is Out of Stock — the list page shows no stock status at all. Before recommending any plan, open that plan's own detail/cart URL and confirm no "out of stock" marker and that the page reaches the configure/checkout step. Verify per-plan; never trust the list page or secondhand "still available" claims. See `references/restock-monitoring.md`.
 
 ## Output format
 
@@ -29,7 +30,7 @@ Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号
 
 ## Implementation
 
-- Daily digest = Hermes cron job **`6d6f9537521d`** (`0 9 * * *` CST, enabled_toolsets=[web], deliver=origin). Full verified prompt in `references/cron-prompt.md`.
+- Daily digest = Hermes cron job **`6590a0a5570f`** (`0 9 * * *` CST, enabled_toolsets=[web], deliver=origin). Full verified prompt in `references/cron-prompt.md`.
 - To change behavior, **update the cron prompt** (cronjob action=update) — never recreate the job blindly.
 - One-shot requests: follow the same verification protocol inline.
 
@@ -42,5 +43,6 @@ Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号
 
 ## References
 
-- `references/cron-prompt.md` — the exact verified cron prompt (freshness + cross-validation + negative checks) used by the daily digest
+- `references/cron-prompt.md` — the exact verified cron prompt (freshness + cross-validation + negative checks + purchasability checks) used by the daily digest
+- `references/restock-monitoring.md` — VPS 库存监控工具（hostmonit / VPSKnow / 自建 RackNerd watcher）+ WHMCS 商家库存实测步骤
 - `references/sim-card-alternatives.md` — giffgaff 2026 mass-ban case study + verified low-cost keep-alive SIM alternatives (HK/US/UK)
