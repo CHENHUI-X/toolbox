@@ -233,6 +233,8 @@ FASTNET 这类商家的 IP 不是终身的——会整段迁移到 DDoS 防护�
 
 推送脚本：生成报告 + `curl TG sendMessage`（用本机 bot token/chat_id）一条龙 shell，cron 每天 10:45（与主机 10:30 错开不轰炸）。跨机传脚本用本地生成→scp，同订阅文件的教训。
 
+**用户要"XX的流量"时先确认口径**：日报默认只报本机——用户说的可能是另一台机器的数据，不是"推送没到"。并入方式：主机脚本 SSH 读对端 `/proc/net/dev` 计数器（jq 式增量状态存独立 json，如 qqg-traffic-state.json），首次运行只建基线不报增量；SSH 取数失败输出「⚠️ 取数失败今日缺报」而不是静默少一段。
+
 ## 十八、时区统一
 
 第二台机器默认 UTC：`timedatectl set-timezone Asia/Shanghai` 后重启 sing-box/订阅服务/gateway（日志时间戳随新时区）。cron 定时（如互备监控 0 点/12 点）自动跟随新时区。

@@ -68,3 +68,9 @@ curl -s -m 8 -o /dev/null -w "%{http_code}" http://google.cloud.eosphor.dpdns.or
 5. 订阅输出 UUID/公钥/short-id vs sb.json — 凭据一致吗
 6. `curl -s https://api.ipify.org` — IP 变了吗（变了 → DDNS/订阅里 server 字段）
 7. `ufw status` — 端口放行了吗
+
+## 客户端缓存旧订阅（用户侧连不上的高频根因）
+
+服务端日志出现用户真实 IP 的 `REALITY: processed invalid connection`，而 agent 自测端到端 204 → 服务端/订阅已对齐，是**用户客户端还缓存着旧参数**。让用户更新订阅前不要继续改服务端——越改越乱（会踩 apple.com 握手被丢之类的次生坑）。先确认服务端 journalctl 中 invalid connection 的来源 IP 停止出现（= 用户已刷新订阅）再评估是否真有服务端问题。
+
+服务端「兼容新旧两种 sni」的尝试不可行：sing-box Reality 的 server_name 与 handshake.server 必须同值，且 QQG 线路到 apple.com:443 握手被丢——只有唯一稳定组合，不存在双兼容配置。

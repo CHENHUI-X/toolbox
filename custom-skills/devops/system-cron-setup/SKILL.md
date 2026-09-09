@@ -322,6 +322,10 @@ When the user reports `✅ Hermes Gateway 已自动重启` and the gateway logs 
 
 See `references/cron-source-investigation.md` for the full investigative workflow with a real example.
 
+### Hermes cron jobs suddenly all failing (gateway system-service env)
+
+Symptom: every Hermes cron job fails at dispatch with `systemd-run --user --scope is unavailable` while the gateway is active and platforms are connected. The gateway's system-service unit lacks `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS`, so the restart-safe worker scope probe fails. Fix via systemd drop-in + gateway restart + end-to-end delivery check: see `references/gateway-user-bus-env.md`.
+
 ## Related Skills
 
 - `hermes-agent-operations` — gateway service management, credential handling, cross-instance setup

@@ -56,3 +56,27 @@
 ## 服务端被外部改动的检测
 
 任何时候「上网不通」，第一步：`ls -la /etc/s-box/sb.json` 看 mtime + 对比订阅关键参数（sni/servername/uuid/password/公钥）。yg 脚本重跑/另一台 agent 改动都会改 sb.json 且不通知。
+
+## 全量矩阵实测模板（修完必跑，不跑不许报修好）
+
+从两台 sb.json 程序化拉取全部参数（禁止手抄），对每节点本机起临时 sing-box client → socks → curl generate_204 期待 204：
+
+```python
+# TCP 三协议（vless/vmess/anytls）+ hy2：按服务端真值拼 outbound，逐节点 204 判定
+# 关键点：
+# - vless client 的 reality.public_key 由服务端 private_key 推导（x25519），不要抄旧值
+# - vmess client transport 三件套照抄服务端（path/ed/edh），tls.enabled 用服务端真值
+# - hy2/tuic client tls 用 insecure:true（自签证书）
+# - 判定用 http_code 起始 204，000/FAIL 均算失败；逐节点打印 ✅/❌ 汇总 x/y
+```
+
+UDP 协议（hy2/tuic）假阴性排查顺序：
+1. client 配置 FATAL（如本机 sing-box outbound 不认顶层 alpn）→ 先 `sing-box check` 过配置再判定节点
+2. GCP hairpin：本机连本机公网 IP 的 UDP 不可靠
+3. 真凭据 = 服务端 `journalctl -u sing-box` 出现用户真实 IP 的 `inbound connection to <目标>` 成功转发记录
+
+客户端侧排查顺序（用户报某协议超时）：
+1. 服务端 sb.json 与三份订阅逐字段 diff（改过的一侧会不一致）
+2. 服务端 journalctl 找用户 IP 的握手/invalid connection 记录 —— invalid connection = 客户端缓存旧订阅未刷新，先让用户更新订阅再继续排查
+3. conntrack 确认 UDP 双向是否 [ASSURED]（包通但 TLS 校验挂 = 订阅缺 skip-cert-verify）
+4. TCP 握手延迟/下载测速区分「配置问题」与「线路晚高峰」（服务端互测快 + 用户慢 = 国际出口拥塞，非配置）
