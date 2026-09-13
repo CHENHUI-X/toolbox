@@ -718,6 +718,7 @@ cronjob action=create \
 - **RULE-SET 无裸 IP 例外**：节点 server 字段仍全用域名；订阅整体零裸 IP 是硬性要求
 - 节点命名规范：`🇺🇸 洛杉矶 | VLESS`（国旗+真实城市+协议）。⚠️ 商家宣传的机房国家可能是 IP 广播假象——用 TCP 握手延迟实测物理位置（俄勒冈→目标 36ms=美西，≠波兰的 180ms+），以实测为准命名
 - **订阅再生成必须携带完整分流块**：定稿的 ACL4SSR 结构（4 分组 + rule-providers + 规则序）作为脚本常量随节点一起输出，禁止在"临时/精简版"里降级成几条兜底规则——再生成正是分流静默回退的时刻，客户端只显示"全部走代理"且无人报错
+- **⛔ 全协议交付，禁按客户端筛选/删除协议（2026-09-13 Parker 原话"你不用自主给我筛选协议，不能用不要删除"）**：订阅永远包含全部节点×协议，客户端支不支持是客户端的事（Parker 手机用 Clash Meta，全协议支持）；不要因为"某客户端不认 vless/hy2/tuic/anytls"就删节点或生成精简版
 - **rule-provider 源 URL 逐个 curl 实测 200 再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律。重写订阅生成脚本时从本清单复制文件名，**禁止凭记忆重敲 URL**——已实测 200 的 8 个源（基路径 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/`）：`LocalAreaNetwork.list`、`BanAD.list`、`GoogleCN.list`、`ChinaDomain.list`、`ChinaCompanyIp.list`、`Download.list`、`Telegram.list`、`ProxyGFWlist.list`
 
 ## GCP Ephemeral IP Change Handling
