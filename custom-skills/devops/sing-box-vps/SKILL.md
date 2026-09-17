@@ -704,10 +704,11 @@ cronjob action=create \
 - **用户区分"订阅"与"复写规则"**：第二台机器交付精简纯订阅（proxies+groups+rules），server 字段全域名零裸 IP，订阅服务 80/443 双端口（用户复制链接常不带 :443，只开 443 会误报超时）
 - **CF API Token 在 ~/.cloudflare_token.txt**（Edit zone DNS，作用域 eosphor.dpdns.org）：给新机器加子域名 A 记录用 API 搞定，不用麻烦用户
 - **⛔ 订阅字段零硬编码 + 修完跑全量矩阵（2026-09-07 用户暴怒铁律"为啥每次都犯错，不能一次性修好"）**：生成/修订阅时每个字段从服务端 sb.json 读真值（vmess path 带 -vm 后缀+early-data、vmess tls 各机不同 GCP有/QQG无、自签证书必带 skip-cert-verify、QQG Reality sni=itunes.apple.com）；交付前必须对全部节点×协议跑真实端到端测试（临时 client + curl 204），只测刚改的一项=把下一个坑留给用户。逐字段真值映射表见 `references/subscription-field-truth.md`；一键同步器 `/root/.hermes/scripts/sync-all-subs.py`（真源=两台 sb.json→三份订阅→验证），QQG 的 aws-sub.yaml 禁手改
+- **升级生成链路时同批清剿旧生成器**：重写/取代某个订阅生成脚本前，先全盘 grep 输出文件名（`grep -rn '<输出文件名>' /etc/cron.d/ /var/spool/cron/ ~/.hermes/scripts/`），把引用它的旧 cron 和旧脚本一并停用——旧生成器挂在 cron 上会按原周期用旧模板覆盖同一输出文件，本地订阅被静默打回旧版，只有本地 vs 远端内容对比才暴露得出来
 
-## 分流规则方案（2026-09-02 实战定稿）
+## 分流规则方案（现行：ACL4SSR_Online_Full 官方模板）
 
-用户点名要 ACL4SSR 风格的规则（订阅转换站同款），方案演进与坑：
+用户点名要 ACL4SSR 风格的规则（订阅转换站同款）；现行真源 = 官方仓库 `ACL4SSR/ACL4SSR` 的 `ACL4SSR_Online_Full.ini`（13 分组 / 21 规则 / 17 个 rule-provider）。升级或重建分流一律以官方模板为底，唯一允许的适配 = 砍掉本环境没有节点的地区/流媒体分组，不自己发明精简结构。方案演进与坑：
 
 - **首选：rule-providers 引用 ACL4SSR 碎片**（订阅小、客户端自动更新、Stash 规则页可点开看明细）：
   - 碎片源 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/{name}.list`，behavior 用 `classical`
@@ -717,9 +718,9 @@ cronjob action=create \
 - **用户对规则明细的关注点**：他要在 Stash 分流页看到"具体哪个域名/IP 走哪"——RULE-SET 远程引用满足此需求（客户端下载后可见），不要因此误改回内联
 - **RULE-SET 无裸 IP 例外**：节点 server 字段仍全用域名；订阅整体零裸 IP 是硬性要求
 - 节点命名规范：`🇺🇸 洛杉矶 | VLESS`（国旗+真实城市+协议）。⚠️ 商家宣传的机房国家可能是 IP 广播假象——用 TCP 握手延迟实测物理位置（俄勒冈→目标 36ms=美西，≠波兰的 180ms+），以实测为准命名
-- **订阅再生成必须携带完整分流块**：定稿的 ACL4SSR 结构（4 分组 + rule-providers + 规则序）作为脚本常量随节点一起输出，禁止在"临时/精简版"里降级成几条兜底规则——再生成正是分流静默回退的时刻，客户端只显示"全部走代理"且无人报错
+- **订阅再生成必须携带完整分流块**：现行定稿 = 官方 **ACL4SSR_Online_Full.ini** 模板（拉 raw ini 照原序迁移），作为脚本常量随节点一起输出，禁止在“临时/精简版”里降级成几条兜底规则——再生成正是分流静默回退的时刻，客户端只显示“全部走代理”且无人报错
 - **⛔ 全协议交付，禁按客户端筛选/删除协议（2026-09-13 Parker 原话"你不用自主给我筛选协议，不能用不要删除"）**：订阅永远包含全部节点×协议，客户端支不支持是客户端的事（Parker 手机用 Clash Meta，全协议支持）；不要因为"某客户端不认 vless/hy2/tuic/anytls"就删节点或生成精简版
-- **rule-provider 源 URL 逐个 curl 实测 200 再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律。重写订阅生成脚本时从本清单复制文件名，**禁止凭记忆重敲 URL**——已实测 200 的 8 个源（基路径 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/`）：`LocalAreaNetwork.list`、`BanAD.list`、`GoogleCN.list`、`ChinaDomain.list`、`ChinaCompanyIp.list`、`Download.list`、`Telegram.list`、`ProxyGFWlist.list`
+- **rule-provider 源 URL 逐个 curl 实测 200 再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律。重写订阅生成脚本时从清单复制文件名，**禁止凭记忆重敲 URL**——现行 17 个源（含 `Ruleset/` 子目录的 OpenAi/SteamCN 等）以 `/root/.hermes/scripts/sync-all-subs.py` 内置清单为准，逐个 curl 实测 200 后才许交付；下列 8 个是早期最小集，仅作保底：`LocalAreaNetwork.list`、`BanAD.list`、`GoogleCN.list`、`ChinaDomain.list`、`ChinaCompanyIp.list`、`Download.list`、`Telegram.list`、`ProxyGFWlist.list`
 
 ## GCP Ephemeral IP Change Handling
 

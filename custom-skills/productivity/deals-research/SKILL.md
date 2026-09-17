@@ -40,9 +40,13 @@ Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号
 - Overseas SIM risk profiles change fast (giffgaff ban was sudden, 12万+ accounts). Re-check for bans before every recommendation cycle; don't trust last month's knowledge.
 - Don't call a deal "verified" on a single aggregator post — two independent sources minimum.
 - 保号卡 requests mean giffgaff-**style** low-cost keep-alive cards (cheap annual hold, free SMS receive, zero/low monthly) — not necessarily giffgaff itself.
+- **溯源自证是第一反应，不是辩解**：用户质问"你哪看到的"/"链接不存在"时，先查自己的推送记录（session_search），找到原帖/原链后立刻自测可达性，再把**具体帖子内容直接贴给用户**——链接可能被 TG 吃掉、要登录或地区墙，依赖用户自己打开链接必翻车。同时检查推送缺陷（如只给了论坛首页链接没锚定到帖子）并当场改掉生成规则。
+- **对自己的历史输出零记忆≠没发生过**：用户引用几天前推送里的数字（如"$6.99/年"）时，先假设他说的是真的、去查记录，别开口就说"你记岔了"——错误在自己推送里时先认领再修正。
 
 ## References
 
 - `references/cron-prompt.md` — the exact verified cron prompt (freshness + cross-validation + negative checks + purchasability checks) used by the daily digest
 - `references/restock-monitoring.md` — VPS 库存监控工具（hostmonit / VPSKnow / 自建 RackNerd watcher）+ WHMCS 商家库存实测步骤
 - `references/sim-card-alternatives.md` — giffgaff 2026 mass-ban case study + verified low-cost keep-alive SIM alternatives (HK/US/UK)
+- `references/saily-keepalive.md` — Saily eSIM 保号价格实况（年套餐仅 APP 内购、$X/年=码后价须注明条件）
+- `references/vps-by-region.md` — 分地区 VPS 选品笔记（UK/SG/TR/JP 已验证商家+价格锚点+Offers/WTB 区分）
