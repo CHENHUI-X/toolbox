@@ -497,6 +497,19 @@ https://域名/nx4hspzb  # 如果保留了路径保护
 
 **PowerShell 逗号是数组分隔符** — `--allow "udp:65083,udp:53900"` 必须加引号，否则 gcloud 报 `received [udp:65083 udp:53900]`。
 
+## 原始订阅交付（用户自行去转换站套模板）
+
+用户现以 bianyuan.xyz 等转换站自套模板为主，成品订阅降级为备份。交付顺序：先给 raw 链接 + 一句转换站操作提示，**不要主动再替用户配规则**。
+
+- `sync-all-subs.py` 每次同步自动生成 `/etc/s-box/raw-nodes.yaml`（纯 proxies，无 rules/groups）并 scp 推到 QQG 同路径——节点变动后 raw 链接内容自动更新，无需手工维护
+- 两台机器的订阅服务均配 `/raw` 路由（PATH_MAP: `'/raw': '/etc/s-box/raw-nodes.yaml'`）；用户 raw 链接不带端口即 80
+- 转换站口径：后端默认，远程配置选 ACL4SSR_Online_Full（与本机订阅同源）
+
+### Pitfalls
+- **每台机器跑两个订阅服务实例**：`subscription-server.service`（443）+ `subscription-server-80.service`（80）。改 PATH_MAP/脚本后**两个 unit 都要 restart**，只重启 443 会出现「本机 127.0.0.1 测试正常、公网异常」的精神分裂——不带 `:443` 的请求打到 80 端口旧进程
+- **两台机器 sub-key 不同**：QQG 与 GCP 的 `/etc/s-box/sub-key` 内容不同，别假设一把 key 通吃两个域名
+- 调试订阅路由时 curl 显式带 `:443` 或 `:80`，端口默认值会掩盖真实命中路径（GET 默认 80，HEAD/带证书的 https 才是 443）
+
 ## 多机部署（第二台 VPS）
 
 在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信 / 全客户端多格式订阅交付的完整流程（脚本非交互安装、密钥同步字段表、Reality 公钥配对验证、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、精简订阅 vs 复写规则、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重、base64/sing-box/Surfboard 多格式生成、subconverter 弃用原因）：见 `references/multi-server-deployment.md`。
@@ -697,6 +710,7 @@ cronjob action=create \
 - `references/ip-geolocation-correction.md` — IP 广播导致 GEO 库国家记录错误的自助纠错流程（MaxMind 程序化提交、实测物理位置、工单文案要素）
 - `references/multi-server-deployment.md` — 多机部署全流程：密钥统一、SSH 反向隧道、peer 互备、多格式订阅交付（Clash/base64/sing-box/Surfboard）、ACL4SSR 分流、第二台机器接 TG bot、Syncthing 双脑实时记忆互通、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重
 - `references/subscription-field-truth.md` — sb.json→Stash 订阅逐字段真值映射（vmess path/tls 各机差异、自签证书 skip-cert-verify、QQG Reality sni 限制、TUIC 测试假阴性、全量矩阵测试模板、sync-all-subs.py 同步器）——改订阅前必读，杜绝硬编码
+- `references/cn-app-domain-routing.md` — 国内 App 分流覆盖：GEOIP 穿透机制（腾讯云 HK/SG CDN 骗过 GEOIP,CN）、App 流量走代理的诊断流程、五大社区规则库对照表（ACL4SSR/Sukka/blackmatrix7/v2fly/Loyalsoldier 的覆盖与坑）、RULE-SET 引用数≠规则条数的解释口径
 
 ## 检查钩子补充坑（详见 sing-box-node-check 技能 + multi-server-deployment.md 第七节）
 
@@ -708,19 +722,24 @@ cronjob action=create \
 
 ## 分流规则方案（现行：ACL4SSR_Online_Full 官方模板）
 
-用户点名要 ACL4SSR 风格的规则（订阅转换站同款）；现行真源 = 官方仓库 `ACL4SSR/ACL4SSR` 的 `ACL4SSR_Online_Full.ini`（13 分组 / 21 规则 / 17 个 rule-provider）。升级或重建分流一律以官方模板为底，唯一允许的适配 = 砍掉本环境没有节点的地区/流媒体分组，不自己发明精简结构。方案演进与坑：
+用户点名要 ACL4SSR 风格的规则（订阅转换站同款）；现行真源 = 官方仓库 `ACL4SSR/ACL4SSR` 的 `ACL4SSR_Online_Full.ini` + Sukka 双源（`/Clash/non_ip/domestic.txt`、`/Clash/ip/china_ip.txt`）+ blackmatrix7 ChinaMax。升级或重建分流一律以这些社区权威源为底，唯一允许的适配 = 砍掉本环境没有节点的地区/流媒体分组，不自己发明精简结构。方案演进与坑：
 
-- **首选：rule-providers 引用 ACL4SSR 碎片**（订阅小、客户端自动更新、Stash 规则页可点开看明细）：
-  - 碎片源 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/{name}.list`，behavior 用 `classical`
-  - 标准顺序：LocalAreaNetwork→DIRECT、BanAD/BanProgramAD→REJECT、ChinaDomain/ChinaCompanyIp/ChinaIp/GoogleCN→DIRECT、国外碎片（ProxyGFWlist/ProxyLite/Telegram/Netflix）→节点组、MATCH 兜底→节点组
+- **首选：rule-providers 引用社区权威碎片**（订阅小、客户端自动更新、Stash/CMFA 规则页可点开看明细）：
+  - ACL4SSR 碎片源 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/{name}.list`，behavior 用 `classical`
+  - Sukka 源必须用 `/Clash/` 预处理路径：`https://ruleset.skk.moe/Clash/non_ip/domestic.txt`（classical，国内域名全家桶含微信 CDN）；**不要用 `/List/` 通用路径**（Surge 格式，IP 库混 DOMAIN 行）。china_ip.txt IP 版已删——被 ChinaMax 内嵌 IP 段 + GEOIP,CN 双重覆盖，纯冗余且拖慢匹配
+  - blackmatrix7 ChinaMax：`https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/ChinaMax/ChinaMax.list`（classical，12.4 万行长尾聚合，interval 43200），盖住 Sukka/ACL4SSR 都缺的 App 长尾 CDN 域
+  - 标准顺序：LocalAreaNetwork→DIRECT、BanAD/BanProgramAD→REJECT、SukkaDomestic→ChinaMax→ChinaDomain 等直连碎片→DIRECT、国外碎片→节点组、GEOIP,CN→DIRECT、MATCH 兜底→节点组
   - 分组加一个 `♻️ 自动选择`（url-test）挂在 select 组首位
+- **DNS 段基础配置（运行必需，非规则自造）**：fake-ip 模式（enhanced-mode: fake-ip + fake-ip-range/16 + fake-ip-filter 保护 NTP/局域网/连网检测）+ 国内外 DNS 分离 + fallback-filter geoip——缺 enhanced-mode 时 Clash Meta 行为随版本漂移
 - **内联大规则集（Loyalsoldier 15 万条）已废弃**：订阅 5MB+，且从 payload YAML 手转规则行极易出格式错误（`payload:,` 残留、引号拼接坏行），客户端直接解析失败
 - **用户对规则明细的关注点**：他要在 Stash 分流页看到"具体哪个域名/IP 走哪"——RULE-SET 远程引用满足此需求（客户端下载后可见），不要因此误改回内联
 - **RULE-SET 无裸 IP 例外**：节点 server 字段仍全用域名；订阅整体零裸 IP 是硬性要求
 - 节点命名规范：`🇺🇸 洛杉矶 | VLESS`（国旗+真实城市+协议）。⚠️ 商家宣传的机房国家可能是 IP 广播假象——用 TCP 握手延迟实测物理位置（俄勒冈→目标 36ms=美西，≠波兰的 180ms+），以实测为准命名
 - **订阅再生成必须携带完整分流块**：现行定稿 = 官方 **ACL4SSR_Online_Full.ini** 模板（拉 raw ini 照原序迁移），作为脚本常量随节点一起输出，禁止在“临时/精简版”里降级成几条兜底规则——再生成正是分流静默回退的时刻，客户端只显示“全部走代理”且无人报错
 - **⛔ 全协议交付，禁按客户端筛选/删除协议（2026-09-13 Parker 原话"你不用自主给我筛选协议，不能用不要删除"）**：订阅永远包含全部节点×协议，客户端支不支持是客户端的事（Parker 手机用 Clash Meta，全协议支持）；不要因为"某客户端不认 vless/hy2/tuic/anytls"就删节点或生成精简版
-- **rule-provider 源 URL 逐个 curl 实测 200 再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律。重写订阅生成脚本时从清单复制文件名，**禁止凭记忆重敲 URL**——现行 17 个源（含 `Ruleset/` 子目录的 OpenAi/SteamCN 等）以 `/root/.hermes/scripts/sync-all-subs.py` 内置清单为准，逐个 curl 实测 200 后才许交付；下列 8 个是早期最小集，仅作保底：`LocalAreaNetwork.list`、`BanAD.list`、`GoogleCN.list`、`ChinaDomain.list`、`ChinaCompanyIp.list`、`Download.list`、`Telegram.list`、`ProxyGFWlist.list`
+- **⛔ 分流问题禁自造规则集，先查社区成熟方案（2026-09-13 Parker 原话"看看别人的，别自己瞎几把搞"）**：分流/IP穿透类问题先调研社区主流规则库再动手，采纳已验证的做法；自造 ASN 前缀 list（RIPEstat 拉腾讯全部段做直连）被 Parker 明确否定并已回滚
+- **⛔ 订阅 rules 零内联自造（2026-09-13 Parker 多次暴怒后定稿）**：订阅 rules 禁止手写内联域名/IP-CIDR 规则；官方模板外的一切增补（cncidr、sniffer、GEOIP,LAN、GEOSITE 大厂分类……）加了又删就是白折腾——**动手前先问 Parker**。现行定稿 = ACL4SSR_Online_Full 官方原文（砍地区组）+ Sukka domestic.txt（`/Clash/` 路径）+ blackmatrix7 ChinaMax（12.4 万行长尾聚合）+ fake-ip DNS 基础段，均社区权威源非自造。完整机制、诊断流程、规则库对照表见 `references/cn-app-domain-routing.md`
+- **rule-provider 源 URL 逐个 curl 实测 200 + 抽查内容格式再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律；状态码 200 还不够——Sukka 的 `/List/` 通用路径（Surge 格式，IP 库里混 DOMAIN 签名行）和 `/Clash/` 预处理路径返回都是 200，不打开看内容发现不了。重写订阅生成脚本时从清单复制文件名，**禁止凭记忆重敲 URL**——现行源清单以 `/root/.hermes/scripts/sync-all-subs.py` 内置为准
 
 ## GCP Ephemeral IP Change Handling
 
