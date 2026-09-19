@@ -497,13 +497,14 @@ https://域名/nx4hspzb  # 如果保留了路径保护
 
 **PowerShell 逗号是数组分隔符** — `--allow "udp:65083,udp:53900"` 必须加引号，否则 gcloud 报 `received [udp:65083 udp:53900]`。
 
-## 原始订阅交付（用户自行去转换站套模板）
+## 原始订阅交付 + 自建转换（现行主模式）
 
-用户现以 bianyuan.xyz 等转换站自套模板为主，成品订阅降级为备份。交付顺序：先给 raw 链接 + 一句转换站操作提示，**不要主动再替用户配规则**。
+用户以「节点给你，规则我自己套」为主。交付顺序：给 `/convert` 成品链接（等价转换站产物、全协议不丢），或 raw 链接让他自己转——**不要主动再替用户配规则**。
 
-- `sync-all-subs.py` 每次同步自动生成 `/etc/s-box/raw-nodes.yaml`（纯 proxies，无 rules/groups）并 scp 推到 QQG 同路径——节点变动后 raw 链接内容自动更新，无需手工维护
-- 两台机器的订阅服务均配 `/raw` 路由（PATH_MAP: `'/raw': '/etc/s-box/raw-nodes.yaml'`）；用户 raw 链接不带端口即 80
-- 转换站口径：后端默认，远程配置选 ACL4SSR_Online_Full（与本机订阅同源）
+- `sync-all-subs.py` 每次同步自动生成并 scp 推 QQG：`/etc/s-box/raw-nodes.yaml`（纯 proxies，无 rules/groups）+ `raw-nodes.txt`（分享链接 URI 的 base64 包，vmess ws path 带 `{uuid}-vm?ed=2048` 后缀）
+- 订阅服务路由（两台机器 80/443 双实例都要有）：`/raw`→raw-nodes.yaml，`/rawtxt`→raw-nodes.txt；用户 raw 链接不带端口即 80
+- **公共转换站会丢节点**：bianyuan.xyz 的公共后端不稳定，api.dler.io 等 subconverter 老内核不认识 vless-reality/tuic——yaml 和 URI 格式都丢（10 节点转出 6 个）。用户报「转换后 XX 协议端口没了」就是这个根因
+- **解法 = 自建 MetaCubeX/subconverter**（v0.9.2，内核 v0.9.1-mihomo，全协议识别）：`/opt/subconverter` + systemd `subconverter.service` 监听 25500 仅本机；订阅服务加 `/convert` 路由代理到 `http://127.0.0.1:25500/sub?target=clash&url=<raw>&config=<模板ini>`，默认模板 ACL4SSR_Online_Full_AdblockPlus.ini（用户点的去广告版：BanAD+BanProgramAD+EasyList/EasyListChina/EasyPrivacy，实测 33 组 9.6 万规则），`&config=` 可换模板。两台机器各装一份（QQG 的 sub-key 不同），交付 `http://aws.eosphor.dpdns.org/convert?key=<QQG key>`
 
 ### Pitfalls
 - **每台机器跑两个订阅服务实例**：`subscription-server.service`（443）+ `subscription-server-80.service`（80）。改 PATH_MAP/脚本后**两个 unit 都要 restart**，只重启 443 会出现「本机 127.0.0.1 测试正常、公网异常」的精神分裂——不带 `:443` 的请求打到 80 端口旧进程
@@ -512,7 +513,7 @@ https://域名/nx4hspzb  # 如果保留了路径保护
 
 ## 多机部署（第二台 VPS）
 
-在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信 / 全客户端多格式订阅交付的完整流程（脚本非交互安装、密钥同步字段表、Reality 公钥配对验证、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、精简订阅 vs 复写规则、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重、base64/sing-box/Surfboard 多格式生成、subconverter 弃用原因）：见 `references/multi-server-deployment.md`。
+在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信 / 全客户端多格式订阅交付的完整流程（脚本非交互安装、密钥同步字段表、Reality 公钥配对验证、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、精简订阅 vs 复写规则、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重、base64/sing-box/Surfboard 多格式生成、自建 subconverter 部署）：见 `references/multi-server-deployment.md`。
 
 ## 凭据轮换（清理蹭流用户）
 
@@ -620,9 +621,9 @@ ss -tnp | grep -E "33741|2096|65083|53900|29624" | wc -l
 cat /proc/net/dev | grep ens4 | awk '{print "出站: " $10/1024/1024/1024 " GB"}'
 ```
 
-## 每日安全+流量自动报告
+## 每日安全+流量自动报告（多机：各机自报，不再跨机取数）
 
-`scripts/traffic-report.py` 生成中文安全+流量报告（含日/周/月统计 + 端口扫描 + 异常检测），输出到 stdout，适合 cron `no_agent=true` 定时推送。
+每台机器各自跑 `scripts/traffic-report.py`（stdout 报告）并各自用本机 hermes cron 发 TG——用户已明确要求 QQG 流量不从 GCP 中转。报告格式两机一致（日/周/月/累计 + 端口/连接/系统状态）。
 
 ### 报告内容
 
@@ -669,20 +670,15 @@ cat /proc/net/dev | grep ens4 | awk '{print "出站: " $10/1024/1024/1024 " GB"}
 
 ### KNOWN_PORTS 白名单维护
 
-脚本内置白名单决定什么算"异常端口"。新增正常端口时同步编辑脚本内的 `KNOWN_PORTS` 字典：
+脚本内置白名单决定什么算"异常端口"。新增正常端口时同步编辑脚本内的 `KNOWN_PORTS` 字典（新装服务当天就加，如 SubConverter 25500——否则日报开始误报异常端口）。
 
-```python
-KNOWN_PORTS = {
-    22: "SSH", 80: "HTTP", 443: "订阅服务",
-    33741: "VLESS 代理", 2096: "VMess 代理",
-    65083: "Hysteria2 代理", 53900: "TUIC 代理",
-    29624: "AnyTLS 代理", 8644: "SSH 本地转发",
-    8645: "Hermes 网关", 10808: "SOCKS5 本地代理",
-    53: "DNS (systemd-resolved)",
-}
-```
+### 跨机取数模式（已废弃，仅存量参考）
+
+主机脚本曾通过 SSH 读对端 `/proc/net/dev` 合并报告 QQG 流量；用户已要求各机自报，QQG 段已从主机脚本删除。若用户再要「XX 的流量」，先确认口径：默认各机自报，用户说的可能是另一台机器的数据，不是"推送没到"。
 
 ### 部署（Hermes cron，免 LLM 费用）
+
+GCP 主机（deliver=origin 发回当前聊天）：
 
 ```bash
 cronjob action=create \
@@ -693,10 +689,15 @@ cronjob action=create \
   deliver=origin
 ```
 
+第二台机器（如 QQG 有自己的 hermes + TG bot）：脚本 scp 到对端 `~/.hermes/scripts/traffic-report.py`（KNOWN_PORTS/proxy_ports/网卡名按目标机改），cron 在**对端本机**建：
+
+```bash
+hermes cron create "30 10 * * *" --name "QQG流量日报" \
+  --script traffic-report.py --no-agent --deliver telegram:<用户TG ID>
+```
+
 - `no_agent=true`: 只跑脚本 + 送 stdout，无 LLM 调用成本
-- `deliver=origin`: 自动发到当前聊天
-- `schedule="30 10 * * *"`: 每天北京时间 10:30（系统已是 Asia/Shanghai）
-- **定时推送部署后必须验证真实送达**：对照 cron 日志确认触发，并核验发送结果（如 TG sendMessage 的 ok 字段）；从 .env 取凭据要锚定唯一完整行——.env 经跨机同步/合并后常有重复键，前缀 grep 会静默取到错的那个（发成另一个 bot 或静默失败）
+- **定时推送部署后必须验证真实送达**：对照 cron 日志确认触发，并核验发送结果。投递成功记录在**agent.log**（`cron.scheduler: delivered to telegram:<id>`），gateway.log 里没有 cron 投递行——别在错误的日志里白找
 
 ### 文件位置
 
@@ -740,6 +741,7 @@ cronjob action=create \
 - **⛔ 分流问题禁自造规则集，先查社区成熟方案（2026-09-13 Parker 原话"看看别人的，别自己瞎几把搞"）**：分流/IP穿透类问题先调研社区主流规则库再动手，采纳已验证的做法；自造 ASN 前缀 list（RIPEstat 拉腾讯全部段做直连）被 Parker 明确否定并已回滚
 - **⛔ 订阅 rules 零内联自造（2026-09-13 Parker 多次暴怒后定稿）**：订阅 rules 禁止手写内联域名/IP-CIDR 规则；官方模板外的一切增补（cncidr、sniffer、GEOIP,LAN、GEOSITE 大厂分类……）加了又删就是白折腾——**动手前先问 Parker**。现行定稿 = ACL4SSR_Online_Full 官方原文（砍地区组）+ Sukka domestic.txt（`/Clash/` 路径）+ blackmatrix7 ChinaMax（12.4 万行长尾聚合）+ fake-ip DNS 基础段，均社区权威源非自造。完整机制、诊断流程、规则库对照表见 `references/cn-app-domain-routing.md`
 - **rule-provider 源 URL 逐个 curl 实测 200 + 抽查内容格式再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律；状态码 200 还不够——Sukka 的 `/List/` 通用路径（Surge 格式，IP 库里混 DOMAIN 签名行）和 `/Clash/` 预处理路径返回都是 200，不打开看内容发现不了。重写订阅生成脚本时从清单复制文件名，**禁止凭记忆重敲 URL**——现行源清单以 `/root/.hermes/scripts/sync-all-subs.py` 内置为准
+- **当前运行状态 vs 技能记录以 sync-all-subs.py 为准**：本节的规则源清单是历史定稿过程记录；现行订阅规则（21 条/19 providers，含 ChinaMax）以脚本内置为准。调试时先拉两份订阅 diff 一致性，再对照脚本看预期行为
 
 ## GCP Ephemeral IP Change Handling
 
