@@ -6,6 +6,8 @@
 /search-llm-api/
 /d-skills/
 /datadream/
+/clash-sync-config/
+/synced/
 .git/
 .DS_Store
 __pycache__/
