@@ -1,0 +1,4 @@
+interface:
+  display_name: "Eval SOP"
+  short_description: "按顺序完成数据上传、任务创建、评分回写与 DMS 闭环"
+  default_prompt: "使用 $eval-sop 按数据上传、任务创建、专项评分、结果回写和核验的顺序执行可断点续跑评估。"
