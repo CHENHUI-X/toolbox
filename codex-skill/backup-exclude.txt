@@ -19,3 +19,26 @@ __pycache__/
 *.token
 *credential*
 *secret*
+# Additional internal skills, runtime data, and device configuration.
+/cooper/
+/cooper-*/
+/smartwork*/
+plugins/
+packages/
+sessions/
+cache/
+node_modules/
+.ssh/
+.venv/
+.vscode/
+auth.json
+config.toml
+mcp.json
+settings.json
+known_hosts*
+id_rsa*
+id_ed25519*
+*.pub
+*.sqlite*
+*.log
+*.lock

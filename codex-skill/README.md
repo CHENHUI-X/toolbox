@@ -32,3 +32,20 @@ cp codex-skill/AGENTS.md "$HOME/.codex/AGENTS.md"
 ```
 
 Restart Codex after restoring.
+
+## Multiple devices
+
+Configure the device name once per clone:
+
+```bash
+git config --local codex-skill.device mac
+# In the server clone, use server-a instead.
+```
+
+Snapshots use `codex-skill/devices/<device>/codex/`, `agents/`, and `AGENTS.md`.
+A device only mirrors its own snapshot. Clones without a device setting retain
+the legacy layout. The exclusion file remains authoritative; symbolic links
+are skipped, and the snapshot and exact staged content are scanned. Existing
+staged changes and unpushed commits outside `codex-skill/` stop the backup.
+On the Linux server, cron invokes this script every three days at 09:00 in the
+server's local timezone. A daily cron check keeps the interval across months.
