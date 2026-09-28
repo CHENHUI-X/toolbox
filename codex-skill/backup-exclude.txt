@@ -1,4 +1,5 @@
 /.system/
+/.trash/
 /codex-primary-runtime/
 /cooper-mcp-helper/
 /luban/
@@ -6,6 +7,7 @@
 /search-llm-api/
 /d-skills/
 /datadream/
+/eval-sop/
 /clash-sync-config/
 /synced/
 .git/

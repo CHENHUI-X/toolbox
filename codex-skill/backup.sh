@@ -18,11 +18,11 @@ git -C "$repo_root" diff --cached --quiet || { echo 'Backup stopped: existing st
 git -C "$repo_root" pull --ff-only
 
 mkdir -p "$snapshot/codex" "$snapshot/agents"
-rsync -a --no-links --delete --exclude-from="$script_dir/backup-exclude.txt" "$codex_source/" "$snapshot/codex/"
-rsync -a --no-links --delete --exclude-from="$script_dir/backup-exclude.txt" "$agent_source/" "$snapshot/agents/"
+rsync -a --no-links --delete --delete-excluded --exclude-from="$script_dir/backup-exclude.txt" "$codex_source/" "$snapshot/codex/"
+rsync -a --no-links --delete --delete-excluded --exclude-from="$script_dir/backup-exclude.txt" "$agent_source/" "$snapshot/agents/"
 cp "$HOME/.codex/AGENTS.md" "$snapshot/AGENTS.md"
 
-credential_re='(-----BEGIN (RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----|(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|didichuxing\.com|xiaojukeji\.com)'
+credential_re='(-----BEGIN (RSA |OPENSSH |EC |DSA |ENCRYPTED )?PRIVATE KEY-----|(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{40,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|didichuxing\.com|xiaojukeji\.com)'
 scan() {
   if rg --quiet --text --hidden "$credential_re" "$@"; then
     echo 'Backup stopped: possible credential or internal endpoint found; matching content withheld.' >&2
