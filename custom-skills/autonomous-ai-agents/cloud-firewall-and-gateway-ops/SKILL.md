@@ -3,7 +3,7 @@ name: cloud-firewall-and-gateway-ops
 version: 1.0.0
 author: Hermes Agent
 license: MIT
-description: "Use when opening cloud ports or restarting gateways."
+description: "Use when operating Hermes gateways or cloud firewalls. Check before restart."
 metadata:
   hermes:
     tags: [gcp, aws, firewall, gcloud, gateway-restart, credentials, telegram-commands]
@@ -65,10 +65,26 @@ Security Group 在用户 AWS 控制台操作；实例内 iptables/ufw 照常。�
 
 ## 网关重启
 
-- **自我保护拦截**：任何含 "restart hermes-gateway" / "stop" 字样的命令从 gateway 进程内（含 ssh 远程执行的字样）发出都会被 Block
-- **唯一出路**：命令写进脚本文件 → `echo "/path/script.sh" | at now + 1 minute`
-- **deactivating 不是卡死**：SIGTERM 后 gateway 等当前活跃 turn 结束才真正退出（本机 MemoryHigh=350M 拖慢关闭，实测约 4 分钟）。正确做法是交代用户"这条消息结束后自动完成"，下个 turn 验证，不要反复轮询
+- **先查配置是否需要重启**：不要把每次 config 修改都当成重启需求。Hermes 审批设置走 mtime-keyed 配置缓存，可实时读取；切换 `approvals.mode` 或 `approvals.smart_policy` 不应为了生效而重启整台网关。
+- **Parker 的审批偏好**：常规操作直接执行，只在删除文件、目录或数据前询问。配置用 `approvals.mode: smart`，并将 `approvals.smart_policy` 设为“删除操作 `ESCALATE`、其他被标记操作 `APPROVE`”；不要设 `mode: off`，它也会绕过删除确认。`approvals.deny` 是硬阻断，不是询问。保留硬拦截；无人值守任务没有人可确认删除时应 fail closed。配置后用 `hermes config get approvals` 回读验证。
+- **自我保护拦截**：任何含 "restart hermes-gateway" / "stop" 字样的命令从 gateway 进程内（含 ssh 远程执行的字样）发出都会被 Block；不要把 `at now + 1 minute` 当成可靠绕行。
+- **不要在活跃对话中提前触发重启**：SIGTERM 后 gateway 等当前 active turn 结束才真正退出；systemd 可按 `agent.restart_drain_timeout` 等待很久。先结束当前回复，再安排需要的重启，避免停机时长和消息投递延迟。
+- **确需从网关进程触发时**：使用进程树外的系统级一次性 cron（`/etc/cron.d/`），安排在当前对话结束之后。清理该临时 cron 文件本身属于删除操作；若用户要求删除前确认，先对这个具体文件取得明确确认。未获确认或审批超时，不要换工具、包装命令或改写脚本来绕过门禁；如不能重启，明确说明配置已写但运行中的网关尚未加载。触发后不要在同一轮长时间轮询；重启后验证 `systemctl is-active hermes-gateway` 与 Telegram/Weixin 连接日志，确认前不可宣称已生效。
 - 已有脚本：`/root/.hermes/scripts/restart-gateway.sh`（本机）、`remote-gw-ops.sh`（ssh 新机）、`local-gw-restart.sh`（本机简版）
+
+### 响应变慢与模型选择
+
+- 先区分推理设置与主机压力：核对当前模型/`agent.reasoning_effort`，再看一次轻量内存和服务快照；不要仅凭“内存紧张”就认定它是慢响应的根因。
+- `max` 会增加推理时间和消耗；日常 Hermes 工具型 Agent 先用 `medium`，复杂任务再提高。用户只问模型建议时，分别给最快选项和均衡选项，不要擅自切模型或重启。
+- 对 OpenAI Codex OAuth，按账户实际可见模型和 OpenAI 最新官方说明比较；API 可用不代表 ChatGPT OAuth 账户一定有权限。回答保持简短，并明确哪些是推荐、哪些只是最快。
+
+### 跨网关模型切换与远程故障
+
+- 先区分同一网关里的平台适配器与独立远程 peer：用 `hermes gateway list` 清点本机 profile，用 `hermes peer list` 清点远程网关。同一 profile 下 Telegram、Weixin、QQ 等平台共享模型配置；每个远程 peer 有独立的模型、provider、OAuth 状态和重启方式，逐台检查、逐台验证。
+- 切换 Codex OAuth 前，在目标主机核对 `hermes auth status openai-codex`；`~/.codex/auth.json` 的 Codex CLI 登录与 Hermes 自己的凭证池是分开的。若复用现有 Codex CLI 登录，只走 Hermes 支持的导入流程，不打印或转发 token。
+- `hermes peer dm` 是由远端当前模型驱动的操作通道；远端推理 provider 不可达时，调用会失败，不能据此认定网关进程已死。先分别检查 peer `/health`、SSH/隧道连通性与服务日志；不要让长时间 peer 调用静默等待，也不要在 peer 推理不可用时反复重试同一请求。只有经过验证的独立 SSH/O&M 通道可用时才用它管理远端。
+- 用户不要 `-900k` Codex 变体时，设置基础 model slug 并将 `model.context_length` 恢复到基础额度（例如 `gpt-6-luna` + `272000`）；只去掉 slug 后缀、却保留显式 1,000,000 context pin，仍不符合要求。
+- 不以配置回读作为完成证明：用短小无害调用检查实际 provider/model，并在重启后用新消息会话或 gateway 日志逐台核验；汇报时区分“配置已写”“请求已实测”“运行网关已重载”。
 
 ## 相关技能
 

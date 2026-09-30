@@ -40,6 +40,7 @@ Telegram 会改写消息内容（与微信把手机号打码成【电话】同�
    - `curl -s https://<base_url>/v1/models -H "Authorization: Bearer $KEY"` → 确认目标模型在列表
    - 再用 chat/completions 实测一次调用
 2. **写入配置**（config.yaml 有安全锁，禁止直接编辑，必须用 CLI）：
+   - 切换前保存完整旧路由；旧 custom provider 的 API key/base_url 不可丢弃。若新 provider 不能复用这些字段，先将旧 key 安全迁入 `.env`，用 `model_aliases` 的 `key_env` + `base_url` 建可用旧模型别名，再清理活跃 model block 的旧字段，避免污染新 provider 路由。
    - `hermes config set model.default <model>`
    - `hermes config set model.api_key <key>`
 3. **重启网关**（进程内 restart 被自我保护拦截）：
