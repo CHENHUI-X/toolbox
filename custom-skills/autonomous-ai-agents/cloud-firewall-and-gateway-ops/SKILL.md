@@ -68,6 +68,7 @@ Security Group 在用户 AWS 控制台操作；实例内 iptables/ufw 照常。�
 - **先查配置是否需要重启**：不要把每次 config 修改都当成重启需求。Hermes 审批设置走 mtime-keyed 配置缓存，可实时读取；切换 `approvals.mode` 或 `approvals.smart_policy` 不应为了生效而重启整台网关。
 - **Parker 的审批偏好**：常规操作直接执行，只在删除文件、目录或数据前询问。配置用 `approvals.mode: smart`，并将 `approvals.smart_policy` 设为“删除操作 `ESCALATE`、其他被标记操作 `APPROVE`”；不要设 `mode: off`，它也会绕过删除确认。`approvals.deny` 是硬阻断，不是询问。保留硬拦截；无人值守任务没有人可确认删除时应 fail closed。配置后用 `hermes config get approvals` 回读验证。
 - **自我保护拦截**：任何含 "restart hermes-gateway" / "stop" 字样的命令从 gateway 进程内（含 ssh 远程执行的字样）发出都会被 Block；不要把 `at now + 1 minute` 当成可靠绕行。
+- **Parker's standing rule:** scheduled operations (cron, `at`, systemd timers, delayed restarts) are forbidden unless he explicitly overrides this in a later request. If a lifecycle command is blocked, do not schedule a workaround; leave config saved and report that the running gateway has not reloaded.
 - **不要在活跃对话中提前触发重启**：SIGTERM 后 gateway 等当前 active turn 结束才真正退出；systemd 可按 `agent.restart_drain_timeout` 等待很久。先结束当前回复，再安排需要的重启，避免停机时长和消息投递延迟。
 - **确需从网关进程触发时**：使用进程树外的系统级一次性 cron（`/etc/cron.d/`），安排在当前对话结束之后。清理该临时 cron 文件本身属于删除操作；若用户要求删除前确认，先对这个具体文件取得明确确认。未获确认或审批超时，不要换工具、包装命令或改写脚本来绕过门禁；如不能重启，明确说明配置已写但运行中的网关尚未加载。触发后不要在同一轮长时间轮询；重启后验证 `systemctl is-active hermes-gateway` 与 Telegram/Weixin 连接日志，确认前不可宣称已生效。
 - 已有脚本：`/root/.hermes/scripts/restart-gateway.sh`（本机）、`remote-gw-ops.sh`（ssh 新机）、`local-gw-restart.sh`（本机简版）

@@ -20,7 +20,9 @@ Use this skill when the user asks to create, modify, or migrate scheduled tasks 
 
 ## User Preference
 
-**ALL cron/定时脚本 must use system crontab at `/etc/cron.d/`, NOT Hermes internal cron.** Hermes internal cron is only for tasks that are OK to stop when the gateway stops.
+**ALL cron/定时脚本 must use system crontab at `/etc/cron.d/`, NOT Hermes internal cron. Hermes internal cron is only for tasks that are OK to stop when the gateway stops.**
+
+**Parker's standing preference:** Do not create or use any scheduled operation (cron, `at`, systemd timer, delayed task) unless Parker explicitly overrides this instruction in a later request. A one-shot delayed gateway restart also counts as a scheduled operation.
 
 ### Timezone
 
