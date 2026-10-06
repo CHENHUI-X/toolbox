@@ -2,7 +2,9 @@
 
 Used by Hermes cron job `6590a0a5570f` (every day 09:00 CST, enabled_toolsets=["web"], deliver=origin). This prompt was iterated with the user after real failures: stale Black-Friday articles and the giffgaff mass-ban being recommended as new. Do not simplify the verification rules.
 
-## Prompt body (copy verbatim when updating the job)
+## Legacy prompt template (compare with the live job before updating)
+
+The scheduler's current prompt is authoritative and may contain newer Parker-specific constraints. Before editing the job, read the latest run's user message and merge changes into that exact prompt. Current production search policy: hard cap 20 `web_search` calls per run (≤8 discovery + ≤12 targeted verification), shortlist ≤4 items, at most 3 targeted searches per item, and stop immediately on `loop_web_search_cap`.
 
 ```
 你今天的工作是搜索全网，整理一份每日特惠/羊毛信息汇总发给我。搜索内容包括：

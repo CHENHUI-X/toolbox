@@ -30,7 +30,9 @@ Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号
 
 ## Implementation
 
-- Daily digest = Hermes cron job **`6590a0a5570f`** (`0 9 * * *` CST, enabled_toolsets=[web], deliver=origin). Full verified prompt in `references/cron-prompt.md`.
+- Daily digest = Hermes cron job **`6590a0a5570f`** (`0 9 * * *` CST, enabled_toolsets=["web"], deliver=origin).
+- **Search budget is mandatory**: cap each run at 20 `web_search` calls (≤8 discovery + ≤12 targeted verification), shortlist at most 4 candidates, and drop anything unverifiable instead of expanding searches. Stop immediately on `loop_web_search_cap`; use `web_extract` on known URLs. Broad multi-category, freshness, review, and availability requirements can otherwise exhaust the per-turn guard before synthesis.
+- The live scheduler prompt is authoritative. Read the latest cron run's user prompt before editing; `references/cron-prompt.md` contains legacy verification language and must not be copied verbatim without comparing it to the live job.
 - To change behavior, **update the cron prompt** (cronjob action=update) — never recreate the job blindly.
 - One-shot requests: follow the same verification protocol inline.
 
