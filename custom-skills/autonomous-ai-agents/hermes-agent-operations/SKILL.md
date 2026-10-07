@@ -638,6 +638,7 @@ hermes send --to weixin "MEDIA:/path/to/image.jpg"
 
 ### Pitfalls
 
+- **One iLink bot account = ONE gateway.** Two Hermes gateways sharing the same `WEIXIN_TOKEN`/`WEIXIN_ACCOUNT_ID` both long-poll `getupdates`, which is a single-cursor feed: inbound messages are stolen at random by whichever gateway polls first. Symptom: the same user is answered by one machine but gets a fresh "Hi~ I don't recognize you yet! Here's your pairing code" from the other on every message (each rejection mints a NEW code, so pending entries pile up). Diagnose by hashing the three `WEIXIN_*` values on both hosts and comparing; fix by disabling the platform on one side (`platforms.weixin.enabled: false` + remove the `WEIXIN_*` creds from that host's `.env`), NOT by approving the user on both (that produces duplicate/racing replies).
 - **iLink rate limits aggressive.** 30s+ cooldown per user on send failure (errcode -2). The rate-limit circuit breaker opens at 1 hit in 30s by default.
 - **Can't join ordinary WeChat groups.** iLink bot identity (`...@im.bot`) is designed for DMs, not group chat. Group events rarely arrive regardless of `WEIXIN_GROUP_POLICY`.
 - **QR code expires.** The login flow auto-refreshes up to 3 times. If all expire, rerun `hermes gateway setup`.

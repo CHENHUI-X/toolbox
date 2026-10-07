@@ -10,6 +10,7 @@
    - `from hermes_tools import web_search, web_extract` 循环。⚠️ hermes_tools 只能在 execute_code 里 import（terminal 的 python 没有该模块），抓取脚本一律走 execute_code；Excel 读写两边都行（terminal 缺 openpyxl 时先 `pip install openpyxl -q`）
    - web_search 每家 1 次，24 家/批 ≈ 70~190s 可行
    - **DDG 限流**（报 `DDGSException: No results found` 或越来越慢）时：改用 `web_extract` 抓百度百科，一次传 5 个 URL（`https://baike.baidu.com/item/{urllib.parse.quote(name)}`），25 家 ≈ 50s，明显更快更稳
+   - **大批量（50~100+ 家）首选 Exa 直连通道**：`exa_py` 的 `exa.search_and_contents(公司名, num_results=5, text=True)` 单家 ≈ 2.7s、100 家分两批一个 execute_code 调用就能跑完不超时；返回的 content highlights 直接够写公司概况/痛点，不必再单独 extract。反之把 25 个 `web_search` 塞进一个 execute_code 调用，DDG 慢时整批会卡过工具超时（420s）全部作废——这是本批实际踩到的坑。EXA_API_KEY 在 ~/.hermes/.env；插件形式 `ExaWebSearchProvider().search(q, limit=5)` 同效。free DDG 单次超时硬编码在 `plugins/web/ddgs/provider.py` 的 `_SEARCH_TIMEOUT_SECS`（默认30s），调高只救单次慢查，救不了大批量循环。详见 web-search-routing skill
    - 每批结果立即写 JSON 文件（`/root/.hermes/cache/documents/<批次>/batchN.json`），防 execute_code 超时被杀丢数据
 3. **⚠️ 百度百科错位陷阱（必须处理）**：词条不存在的 URL 会返回其他内容/搜索页，返回顺序 ≠ 请求顺序。**必须从内容里提取 `^#\s*(.+)$` 标题行，建立 title→content 映射，再按公司名匹配**——否则资料张冠李戴（实例：44 条内容里 12 家错位）。
 4. **⚠️ openpyxl 写入坑**：百科原文含控制字符（\b 等）→ `IllegalCharacterError`。写入 Excel 前必须 `re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)`。
