@@ -1,0 +1,4 @@
+interface:
+  display_name: "自媒体视觉选风格"
+  short_description: "结合主题与文案，从两个参考库挑选适合的视频、封面和图文画风"
+  default_prompt: "使用 $self-media-visual-style 根据这篇文案选择画风，并给出对应人物、场景和分镜方案。"

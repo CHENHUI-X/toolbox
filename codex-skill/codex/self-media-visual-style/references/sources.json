@@ -1,0 +1,25 @@
+{
+  "retrieved_at": "2026-10-10T07:22:28.561665+00:00",
+  "counts": {
+    "handraw": 327,
+    "awesome": 541
+  },
+  "sources": {
+    "handraw": {
+      "repository": "https://github.com/yang0/handraw-style",
+      "commit": "4eb29e2fcea3d9595d2f67b363e30ffdea338027",
+      "document": "styles_200_reorganized.md",
+      "sha256": "fd136072c7f009879cd96cb799e0893b2cec1100c1f8db024a9333f6cff73670",
+      "raw_document_url": "https://raw.githubusercontent.com/yang0/handraw-style/4eb29e2fcea3d9595d2f67b363e30ffdea338027/styles_200_reorganized.md",
+      "license_url": "https://github.com/yang0/handraw-style/blob/4eb29e2fcea3d9595d2f67b363e30ffdea338027/LICENSE"
+    },
+    "awesome": {
+      "repository": "https://github.com/freestylefly/awesome-gpt-image-2",
+      "commit": "5cb9109ca2d29476f8e34dbc0cdb43607bdd3f77",
+      "document": "data/cases.json",
+      "sha256": "a9ef652dffdac0802c656e4770f9793315292fa78e955d3e8c6e0e6346eb7da8",
+      "raw_document_url": "https://raw.githubusercontent.com/freestylefly/awesome-gpt-image-2/5cb9109ca2d29476f8e34dbc0cdb43607bdd3f77/data/cases.json",
+      "license_url": "https://github.com/freestylefly/awesome-gpt-image-2/blob/5cb9109ca2d29476f8e34dbc0cdb43607bdd3f77/LICENSE"
+    }
+  }
+}

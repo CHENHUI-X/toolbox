@@ -1,0 +1,4 @@
+interface:
+  display_name: "macOS 应用代理排查"
+  short_description: "排查桌面应用登录与连接失败，配置自动代理并核验实际连接路径"
+  default_prompt: "使用 $macos-app-proxy 检查这个 Mac 应用是否走代理，并让原图标启动时自动生效。"
