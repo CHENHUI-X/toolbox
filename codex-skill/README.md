@@ -16,6 +16,17 @@ The script pulls with `--ff-only`, mirrors only the managed directories,
 checks for common credential formats, stages only `codex-skill/`, commits any
 changes, and optionally pushes them.
 
+Network operations try SSH directly with a connection timeout. To enable a
+fallback through a local HTTP proxy, configure it once in this clone:
+
+```bash
+git config --local codex-skill.proxy 127.0.0.1:7897
+```
+
+After a failed direct connection, the script retries GitHub SSH on port 443
+through that proxy using `nc` HTTP CONNECT. The proxy setting stays in local
+Git configuration and is not backed up. Without it, only direct SSH is used.
+
 ## Exclusions
 
 Built-in/runtime files, caches, credential-like files, and skills containing

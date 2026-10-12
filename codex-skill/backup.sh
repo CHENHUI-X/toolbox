@@ -4,6 +4,22 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
 codex_source=${CODEX_SKILLS_DIR:-"$HOME/.codex/skills"}
 agent_source=${AGENT_SKILLS_DIR:-"$HOME/.agents/skills"}
+
+remote_git() {
+  local rc proxy
+  if GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o ProxyCommand=none -o ProxyJump=none' git -C "$repo_root" "$@"; then
+    return 0
+  else
+    rc=$?
+  fi
+  proxy=$(git -C "$repo_root" config --get codex-skill.proxy || true)
+  [[ -n "$proxy" ]] || return "$rc"
+  [[ "$proxy" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*:[0-9]{1,5}$ ]] || { echo 'Invalid backup proxy address.' >&2; return 1; }
+  [[ $(git -C "$repo_root" remote get-url origin) == git@github.com:CHENHUI-X/toolbox.git ]] || return "$rc"
+  echo 'Direct connection failed; retrying GitHub SSH 443 through the configured HTTP proxy.' >&2
+  GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o ProxyJump=none -o Hostname=ssh.github.com -o HostKeyAlias=github.com -p 443 -o ProxyCommand='nc -X connect -x $proxy %h %p'" git -C "$repo_root" "$@"
+}
+
 device=${BACKUP_DEVICE:-$(git -C "$repo_root" config --get codex-skill.device || true)}
 snapshot=$script_dir
 if [[ -n "$device" ]]; then
@@ -15,7 +31,7 @@ fi
 [[ -d "$codex_source" && -d "$agent_source" && -f "$HOME/.codex/AGENTS.md" ]] || { echo 'Missing skills directory or AGENTS.md.' >&2; exit 1; }
 [[ $(git -C "$repo_root" branch --show-current) == main ]] || { echo 'Backup requires main.' >&2; exit 1; }
 git -C "$repo_root" diff --cached --quiet || { echo 'Backup stopped: existing staged changes must be reviewed first.' >&2; exit 1; }
-git -C "$repo_root" pull --ff-only
+remote_git pull --ff-only
 
 mkdir -p "$snapshot/codex" "$snapshot/agents"
 rsync -a --no-links --delete --delete-excluded --exclude-from="$script_dir/backup-exclude.txt" "$codex_source/" "$snapshot/codex/"
@@ -52,12 +68,12 @@ if ! git -C "$repo_root" diff --cached --quiet -- codex-skill/; then
 fi
 echo "Commit created: $created; HEAD: $(git -C "$repo_root" rev-parse HEAD)"
 if [[ ${1:-} == --push ]]; then
-  git -C "$repo_root" pull --ff-only
+  remote_git pull --ff-only
   for revision in $(git -C "$repo_root" rev-list origin/main..HEAD); do
     while IFS= read -r -d '' file; do
       [[ "$file" == codex-skill/* ]] || { echo 'Push stopped: an unpushed commit changes another directory.' >&2; exit 1; }
     done < <(git -C "$repo_root" diff-tree --root --no-commit-id --name-only -r -z "$revision")
   done
-  git -C "$repo_root" push origin HEAD:refs/heads/main
+  remote_git push origin HEAD:refs/heads/main
   echo 'Push result: success.'
 fi
