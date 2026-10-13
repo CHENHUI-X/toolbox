@@ -20,9 +20,7 @@ Use this skill when the user asks to create, modify, or migrate scheduled tasks 
 
 ## User Preference
 
-**ALL cron/定时脚本 must use system crontab at `/etc/cron.d/`, NOT Hermes internal cron. Hermes internal cron is only for tasks that are OK to stop when the gateway stops.**
-
-**Parker's standing preference:** Do not create or use any scheduled operation (cron, `at`, systemd timer, delayed task) unless Parker explicitly overrides this instruction in a later request. A one-shot delayed gateway restart also counts as a scheduled operation.
+**ALL cron/定时脚本 must use system crontab at `/etc/cron.d/`, NOT Hermes internal cron.** Hermes internal cron is only for tasks that are OK to stop when the gateway stops.
 
 ### Timezone
 
@@ -67,6 +65,15 @@ if [ "$(systemctl is-active myservice)" = "active" ]; then
 fi
 # ... handle failure, with output
 ```
+
+### Parsing network state in monitoring scripts (ss / conntrack)
+
+- **Match the LOCAL address column, not the whole line.** `tcp LISTEN 0 20 127.0.0.1:25 0.0.0.0:*` has `0.0.0.0` as the PEER address — substring-matching `0.0.0.0` flags loopback-only listeners as "exposed ports". Use `ss -H -lntup`, parse the local-address field, and resolve `*` vs loopback binds (including v4-mapped IPv6 like `[::ffff:127.0.0.1]`) before judging exposure.
+- **Derive port whitelists from live config each run — never hardcode.** Proxy ports migrate over time; a hardcoded list keeps flagging new real ports as "unknown" and misses UDP entirely. Read `/etc/s-box/sb.json` inbounds each run and split TCP/UDP by protocol (hysteria2/tuic = UDP-only).
+- **conntrack markers are bracketed:** `[ASSURED]` is never an exact whitespace-split field, so `"ASSURED" not in fields` matches nothing — use `any("ASSURED" in f for f in fields)`. Filter `[UNREPLIED]` the same way.
+- **Exclude process-owned ephemeral UDP sockets from listener alarms.** Long-running proxies hold OS-assigned ephemeral UDP ports for outbound flows; read `/proc/sys/net/ipv4/ip_local_port_range` and ignore sockets owned by the proxy process inside that range, or every report shows a fake "unknown UDP port".
+- **Smoke-test report logic with a temp state dir + synthetic ss/conntrack samples, never against the live state file.** Override `HOME` to a temp dir so `traffic-state.json` snapshots aren't corrupted by a test run, and unit-test the parser with sample `ss` output (loopback listener, wildcard listener, v4-mapped loopback, ephemeral UDP, unexpected TCP+UDP) before deploying — a parser that passed on live output can still mis-handle bracketed markers or mapped addresses.
+- **Filter by local port, not remote.** Counting established connections for a proxy port must match the LOCAL endpoint column (`ss -H -tn state established`, take `fields[-2]`); counting any line containing `:port` also counts the server's own outbound connections to that port on other hosts.
 
 ### Telegram notification via crontab (when service is down)
 When the monitored service is down, you can't use Hermes delivery. Call the Telegram Bot API directly from the script:
@@ -323,10 +330,6 @@ When the user reports `✅ Hermes Gateway 已自动重启` and the gateway logs 
 - 🟢 User-initiated restart (rare on auto-notification)
 
 See `references/cron-source-investigation.md` for the full investigative workflow with a real example.
-
-### Hermes cron jobs suddenly all failing (gateway system-service env)
-
-Symptom: every Hermes cron job fails at dispatch with `systemd-run --user --scope is unavailable` while the gateway is active and platforms are connected. The gateway's system-service unit lacks `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS`, so the restart-safe worker scope probe fails. Fix via systemd drop-in + gateway restart + end-to-end delivery check: see `references/gateway-user-bus-env.md`.
 
 ## Related Skills
 

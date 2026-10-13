@@ -104,15 +104,32 @@ RestartSec=10
 
 ## Stash（iOS）配置
 
-在 Stash 中添加覆写（Override）：
+**用户偏好（铁律）：默认只发 Stash 能用的链接，不要一次甩一堆格式。** 用 Stash 就只需两条：
 
 ```
-类型: HTTP
-URL: http://google.cloud.eosphor.dpdns.org:443/nx4hspzb?key=<sub-key内容>
-更新间隔: 按需
+主订阅（自建节点）: https://google.cloud.eosphor.dpdns.org/merged9k2m?key=<sub-key>
+覆写（默认给这条）: https://google.cloud.eosphor.dpdns.org/override?key=<sub-key>
 ```
 
-仓库 private 不影响此 URL 的正常访问。
+**覆写文件的真实设计（2026-10-14 用户明确，别再自创）：**
+
+- `/override` = **极简补充**：10 个自建节点（名字带「 追加」后缀，与主订阅节点名零重叠，否则 Stash 报“节点名重复”）+ 一个「自建节点」select 策略组（用户手动选） + 仅 PayPal 分流规则（`DOMAIN-SUFFIX,paypal.com` / `paypalobjects.com` / `DOMAIN-KEYWORD,paypal` → 自建节点）。**不要** `#!replace`（主力订阅自带规则必须原样保留），也**不要**塞 33 规则集 / 37 条分流 / 4 个主策略组——用户明确说用不到。
+- **覆写只有 `/override` 一条（唯一正确，用户 2026-10-14 明确）**：其他 `.stoverride` 文件（`/qqg-attach.stoverride`、`/qqg-rules.stoverride`、`/qqg-rules-pure.stoverride`、`/override-min`）**内容/设计都是错的，不要再发、不要再新做**。用户原话："覆写规则就要这一个，其他的全是错的"。
+- **改完覆写/订阅文件必须先用 YAML 严格校验再上线**：`/usr/bin/python3 -c "import yaml;d=yaml.safe_load(open('/etc/s-box/override-stash.yaml'));print(list(d.keys()))"`（系统 python3 在 `/usr/lib/python3/dist-packages` 下有 PyYAML；Hermes venv 外的 python3 没装）。2026-10-14 就是因为拼接时漏掉 `proxies:` 键头，第 5 行出现孤立 `- name:`，Stash 报"覆写格式不正确"。校验通过后还要 `curl -sS` 拉一次端点确认 200 且内容对。
+- 新需求先问清：覆写的职责只有「自建节点（后缀名）+ 一个手动选的「自建节点」策略组 + PayPal 追流」，不要自作主张加规则集/主策略组/`#!replace`。
+- 改动前的背景：起因是主订阅与覆写节点名完全重叠（各自 10 个同名节点），Stash 报“节点名重复”→ 给覆写的节点统一加后缀解决。
+
+`sub-b64`（小火箭/v2rayN）、`sub-sb`（sing-box）、`sub-surf`（Surfboard）、`raw`/`rawtxt`、`qqg-*.stoverride` 只在明确要对应客户端或调试时才发。
+
+### 域名与 TLS（2026-10-14 起）
+
+- **443 是 HTTPS/TLS**：`sub-tls-proxy.py` 终止 TLS → 转发 `127.0.0.1:8080`（`subscription-server.service`）；80 仍是明文 `subscription-server-80.service`。客户端必须用 `https://`，老的 `http://…:443` 会被 RST。
+- **证书 SAN**：`google.cloud.eosphor.dpdns.org` + `gcp.eosphor.dpdns.org`（两个域名都可用，旧帖子里只写 SAN 里的那个名）。
+- **签发/续期**：acme.sh + **DNS-01（dns_cf，token 在 `/root/.cloudflare_token.txt`）**，证书在 `/root/.acme.sh/google.cloud.eosphor.dpdns.org_ecc/`（含 SAN，lease 至 2027-01；每天 00:00 `~/.acme.sh/acme.sh --cron -f` 自动续）。
+- 加域名：`CF_Token=$(cat /root/.cloudflare_token.txt) acme.sh --issue --dns dns_cf -d google.cloud.eosphor.dpdns.org -d <新域名> --keylength ec-256`（保持第一个 `-d` 不变，证书路径才不会变），然后 `systemctl restart sub-tls-proxy.service` 生效。
+- **验证**：`openssl s_client -connect <IP>:443 -servername <域名>` 看 SAN；再用**不带 `-k` 的** `curl` 拉一次订阅（严格校验，`gcp.*` 上次就是这样暴露证书不匹配的）。
+
+IP 判断/DDNS 变更流程不受影响；本机 IP 不变时静默。
 
 ## GitHub 仓库设为 Private
 
@@ -177,7 +194,7 @@ journalctl -u subscription-server.service --no-pager -n 20
 - 2026-09-06 大扫除：clmi.yaml / jhsub.txt / jhdy.txt / sbox.json / vl_reality.txt / an.txt / hy2.txt / tuic5.txt / vm_ws_tls.txt 及各自 .bak 已归档至 /root/net-tune/legacy-backup/。原因：8-29 旧 Reality 钥（pbk=DO1zSn.../sid=0d682811）和过期凭据，真值以 sb.json 为准（pbk=UHnerZD.../sid=e03f8182，由私钥 X25519 推导验证）
 - 当前节点全部用 DDNS 域名（google.cloud.eosphor.dpdns.org），订阅里不嵌裸 IP
 - cron 每 30 分钟已删除，仅开机触发；IP 不变时完全静默
-- 服务端口 443，?key= 鉴权，无 key 一律 401
+- 服务端口 443 = HTTPS(TLS 前端)，80 = 明文，`?key=` 鉴权，无 key 一律 401；探测/监控必须用 `https -k`（或接受 401），用明文 http 打 443 会被 RST —— QQG 的 gcp-monitor.sh 就因此误报过"GCP 失联"
 
 ## Skills Backup to GitHub
 

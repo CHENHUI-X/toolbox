@@ -69,8 +69,21 @@ curl -s -m 8 -o /dev/null -w "%{http_code}" http://google.cloud.eosphor.dpdns.or
 6. `curl -s https://api.ipify.org` — IP 变了吗（变了 → DDNS/订阅里 server 字段）
 7. `ufw status` — 端口放行了吗
 
-## 客户端缓存旧订阅（用户侧连不上的高频根因）
+## 2026-09-14"订阅全部超时"案例：服务端全绿，坏在客户端/对端
 
-服务端日志出现用户真实 IP 的 `REALITY: processed invalid connection`，而 agent 自测端到端 204 → 服务端/订阅已对齐，是**用户客户端还缓存着旧参数**。让用户更新订阅前不要继续改服务端——越改越乱（会踩 apple.com 握手被丢之类的次生坑）。先确认服务端 journalctl 中 invalid connection 的来源 IP 停止出现（= 用户已刷新订阅）再评估是否真有服务端问题。
+用户报"你这边的订阅全部超时"。逐项排查服务端**全部健康**（sing-box active、五端口监听、订阅端点 200/7KB、uuid/sni/pbk/sid 逐项一致、pbk 做私钥 X25519 数学推导匹配、本地用订阅原参数实测 204/50ms）。真因有两个，都不在本机：
 
-服务端「兼容新旧两种 sni」的尝试不可行：sing-box Reality 的 server_name 与 handshake.server 必须同值，且 QQG 线路到 apple.com:443 握手被丢——只有唯一稳定组合，不存在双兼容配置。
+1. **GCP 临时 IP 又变了**（34.82.157.16→34.3.100.22）。GCP 侧 DDNS/订阅文件全域名化早已自动跟上（gcp-subscription-auto-ip-update 流程正常工作），坏的是用户 Stash 缓存的旧订阅。⚠️ **从 QQG 对 GCP 旧 IP 测端口全 timeout 是必然的**，别当成"GCP 挂了"的证据——用 peer dm 让 GCP 自查（`curl api.ipify.org` + metadata external-ip + `systemctl is-active sing-box`）才准。
+2. **用户端旧参数敲门**：QQG journalctl 里用户新出口 IP（218.12.x，用户宽带出口又换了）大量 `REALITY: processed invalid connection`（5~30s 才判拒）且成功转发=0。本地订阅参数能通 + 用户被拒 = 客户端参数陈旧 → 让用户 Stash **强制重拉订阅** + 重连即修复。
+
+**判定表**（本地自测 vs 用户侧表现）：
+
+| 本地用订阅参数实测 | 用户 journalctl 表现 | 结论 |
+|---|---|---|
+| 通 | 大量 invalid 被拒、0 成功转发 | 客户端缓存旧参数 → 强制重拉订阅 |
+| 通 | 连到达都没有 | 用户出口→服务器路径问题（换网/被墙/UDP 被洗） |
+| 不通 | — | 服务端问题，按上面 7 步查 |
+
+**检查清单补两项**（接上面 7 步）：
+8. 用户说的"全部超时"是哪个订阅？本机订阅文件未必含全部节点（aws-sub.yaml 只有 QQG 5 件套，GCP 5 件套在 GCP 侧分发）——先对齐节点清单再排查，别在本机查 GCP 节点。
+9. 多机架构下"全部超时"高频根因 = GCP 临时 IP 变更：每台机器分别核对"实际出口 IP vs 用户端缓存的 server 字段"（域名节点看 DDNS 解析，IP 节点直接对）。

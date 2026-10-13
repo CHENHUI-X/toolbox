@@ -17,7 +17,6 @@ tags: [sing-box, proxy, verification, firewall, udp, gcp]
 - 证书续期 / 更换
 - 重启 sing-box 或订阅服务
 - 订阅文件更新
-- **⚠️ sb.json 被任何外部方式改动（脚本重跑/另一台机器改动/yg脚本重置）——必跑！**
 
 ## 检查清单（按顺序）
 
@@ -102,9 +101,31 @@ curl -s "http://127.0.0.1:443/nx4hspzb?key=xch2422" | head -5
 # 无密码访问必须 401，带密码必须 200
 ```
 
+## 「节点都坏了」诊断顺序（先证服务端，再看客户端）
+
+用户一句"全坏了"不等于服务端故障。按层定位，哪层断报哪层：
+
+1. **服务活性**：`systemctl is-active sing-box`；`ss -H -lntup | grep sing-box` 对照 `/etc/s-box/sb.json` 的 inbounds——TCP+UDP 端口全在监听即服务在岗。
+2. **REALITY 存活**：`openssl s_client -connect IP:443 -servername <SNI>` 返回伪装站证书（如 Apple）= REALITY 正常；连不上才继续往下查。
+3. **过滤扫描噪音**：来自公网扫描器（Censys 网段 167.94.x、DO 机房 167.71.x 等）的 `REALITY: processed invalid connection` / `unknown user password` / `EOF: fallback disabled` 是背景扫描，不是故障证据；不能据此说节点坏了。
+4. **找真实客户端成功记录**：`journalctl -u sing-box --since -24h --no-pager | grep INFO | grep "inbound connection from"`——同日有真实来源 IP 的 HY2/TUIC/VLESS INFO 连接 = 服务端可用，问题在客户端或链路。
+5. **协议探测前先看 tls.enabled**：对 `tls.enabled=false` 的入口（如 ws 明文 VMess）直接发 TLS 握手得 `wrong version number` 是预期现象，不是故障；别把探测方式用错当服务故障。
+6. **确认日志可用窗口**：journald 可能被 vacuum/重启截断，`--since` 早于最早可用时间查不到 ≠ 当时挂了；先看 `journalctl --no-pager | head` 的起始时间再下结论。
+7. **订阅 401 ≠ 订阅服务挂**：401 是 key 不对（与服务器上的 sub-key 文件比对，各机 key 独立勿混）；用正确 key 拉到 200 + 完整配置 = 分发链路正常。
+8. **汇报口径**：TCP 连通 + 协议探测正常 + 日志有真实客户端成功 + 订阅可拉取，四层全过才能说"服务端没问题，去查客户端"；只报证实的层，缺的层标未知。
+
+## 分发层检查（2026-10-13 新增）
+
+改端口后除了节点本身，还要查**分发层**：订阅服务器 PATH_MAP 里各路径指向的文件可能是旧版本（如 GCP `/nx4hspzb`→custom-sub.yaml 曾停在 9/18，AWS 5 个节点全是旧端口），用户手机拉旧订阅必超时。当前正确路径：订阅=`/merged9k2m`（GCP/QQG 均有），覆写=`/override`（10-13 新增，源文件 `/etc/s-box/override-stash.yaml`，双机都有）。
+
+**Stash 覆写(.stoverride)两个硬坑**：
+- 缺 `name` 字段 → 导入界面报"下载文件失败"（YAML 本身合法也没用），必须带 `name:` 头
+- 覆写≠订阅：订阅=完整配置，覆写=YAML 片段（name/desc + proxy-groups + rule-providers + rules）；用户两份都要
+- GCP 分发 443 是明文 HTTP（无真证书），URL 必须用 http:// 前缀，https 会 SSL 错误
+- 各机 sub-key 独立（QQG 前缀 4jo2u7 / GCP 前缀 MVyNra），勿混
+
 ## 已知坑汇总
 
-0. **⚠️ sb.json 被外部改动后必跑全套检查**（2026-09-06 事故）：sing-box-yg 脚本重跑/二号机器改动/任何源重置，都会改 sb.json（如 Reality server_name 从 apple.com 变 itunes.apple.com）→ **订阅里的 sni/servername 就与服务端不匹配 → Reality 握手 x509 错误 → 全部静默不通**。修复方向：以 sb.json 当前值为准，同步改订阅。任何时候发现"上网不通"，第一步先 diff sb.json mtime 和订阅参数（sni/servername/uuid/password/公钥）。
 1. **VMess transport.path 嵌 UUID**：换 UUID 时 path 里的 UUID 不会自动变，必须手动同步（否则 VMess 静默失效）
 2. **TUIC 双凭据**：uuid + password 都要换
 3. **GCP 防火墙 TCP/UDP 分开**：放行 TCP 不代表 UDP 通

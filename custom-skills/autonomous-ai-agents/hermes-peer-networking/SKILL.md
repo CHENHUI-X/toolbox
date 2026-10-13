@@ -62,6 +62,17 @@ metadata:
 - `Host key verification failed` 表示主机身份校验阶段失败，不等于用户公钥认证失败。比对目标机 `/etc/ssh/ssh_host_*_key.pub` 的指纹与隧道端 `ssh-keyscan` 结果；确认一致后才写入 `known_hosts`。不要把 `StrictHostKeyChecking=no` 当最终修复。
 - 双向分别用 `BatchMode=yes`、指定私钥 SSH 到对端并执行 `hostname && whoami`，必须看到退出码 0。再独立检查 tunnel 状态 / NRestarts、原有转发端口和两侧 API `/health`；peer 消息成功不替代 SSH 测试，反之亦然。
 
+## 两机文件同步（Syncthing）
+
+- 真正在跑的同步是 **Syncthing**，不是 `brain-sync.sh`——后者还在但**没挂 cron / 没 timer**，是废弃件；别依赖它、也别以为它在同步（怀疑同步没生效时先 `grep -r brain /etc/cron.d/`）。
+- 当前 folder：`kb`(/home/projects/hermes-knowledge)、`mem`(/root/.hermes/memories)、`vault`、`skills`(/root/.hermes/skills)。
+- 用户要求两机**尽量所有信息同步**：新增的共享型目录/产物要主动纳入 Syncthing，别默认"各机一份"。
+- 有意不同步：`config.yaml`/`.env`（各机配置与密钥）、`state.db`/`sessions`（各自对话历史）、`scripts`/`cron`（两机路径端口不同的变体，互相同步会覆盖）、`SOUL.md`。
+- 新增目录：`scripts/add-syncthing-folder.py --id <id> --path <dir>`（停 syncthing → 复制现有 folder 元素为模板（含两台设备）→ 启 syncthing；写前自动备份 config.xml）。两边 id 与 path 必须一致，启动即建 `.stfolder` 开始对传。
+- **首次合并必然产生 `.sync-conflict-*` 副本**（两边同名文件版本不同）：留原名的 = 较新版本，冲突副本是旧版。清理时先**移出同步目录**归档（移动会让删除同步到对端，比删除安全），真要删按规矩先问用户。
+- 验证：两边同类目录计数一致（如 `ls -d skills/*/*/ | wc -l`）+ 抽样 `md5sum` 一致；实测改一条知识库文档约 25 秒到对端。
+- 自检命令与细节见 `references/session-qqg-gcp-tunnel-sync.md`
+
 ## 云防火墙（先探测云厂商，别假设）
 
 - GCP：`curl -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/project/project-id`
@@ -106,9 +117,27 @@ metadata:
 
 跨 agent 对话保持短而有边界：请对端给出精确证据和简短结论，避免两边不断互相触发新的 peer DM/工具链；需要继续诊断时先发阶段进展，结尾只报当前已验证状态。
 
+### 对端「不回话」先分「慢」与「挂」
+
+- 用户报「它不理我」时，别先查网络。换到**推理模型**后 `agent.reasoning_effort: max` + 大上下文会把单次调用拉到 250-350 秒（输出 3 万+ 推理 token），turn 能跑一小时不出声；而同一模型在没设该值的机器上只要 16-26 秒。
+- 取证顺序（对端本机、只读）：`session_turn_leases`（turn 已跑多久）→ `~/.hermes/logs/agent.log` 的 `API call #N ... latency= out=` → 该会话 message_count/上下文大小。`latency` 数百秒 + `out` 数万 = 在思考，不是挂了。
+- 修法：`hermes config set agent.reasoning_effort high`（或更低）两台都改（配置每 turn 重读，不用重启）；400+ 条消息的老会话建议直接开新会话；`display.busy_input_mode: interrupt` 时用户再发一条就能打断卡住的 turn。
+- 推理 token 按输出计费，`max` 大上下文同时吃额度——同一个旋钮也是成本阀。
+
 另外：
 - **向用户报告状态前必须真验证**——曾只看 config.yaml 就声称“全部切过去了”，实际 fallback 到 deepseek 数天，被用户驳斥。config 写入 ≠ 实际生效；模型看 sessions 表，服务看端口+health，互通看 peer dm 闭环
-- **多格式订阅交付**：用户点破“stash/clash/冲浪板订阅格式都不一样，应分别创建”——单一 Clash YAML 不够。按客户端出格式：Clash YAML（Stash/Meta）+ base64 链接包（Shadowrocket/v2rayN）+ sing-box JSON（官方客户端，1.13 语法四坑：urltest interval 字符串/无 outbound DNS 规则/需 default_domain_resolver/reality 需 utls）+ Surfboard INI（仅 vmess，内核不支持新协议）。subconverter v0.9.0 不认新协议（10 节点只转出 1 个 vmess），已弃用
+- **多格式订阅交付**：用户点破“stash/clash/冲浪板订阅格式都不一样，应分别创建”——单一 Clash YAML 不够。按客户端出格式：Clash YAML（Stash/Meta）+ base64 链接包（Shadowrocket/v2rayN）+ sing-box JSON（官方客户端，1.13 语法四坑：urltest interval 字符串/无 outbound DNS 规则/需 default_domain_resolver/reality 需 utls）+ Surfboard INI（仅 vmess，内核不支持新协议）。subconverter v0.9.0 不认新协议（10 节点只转出 1 个 vmess），已弃用。**分发入口给链接前必须逐条实测**：443 若已是 TLS 前端（如 `sub-tls-proxy` 挂 443、明文服务退到 `127.0.0.1:8080`），给用户的必须是 `https://`，旧的 `http://…:443` 客户端会被 RST 连不上；每台机器的 `sub-key` 独立（`/etc/s-box/sub-key`）别混用；逐个路径 `curl -sSk -o /dev/null -w "%{http_code}"` 应全 200，本机测完再从对端机器测一次。
+
+## 跨机存活监控："对端失联"告警先判真伪，别信单端口
+
+- 每台机器各跑一份探测对方的脚本（system 级 `/etc/cron.d/mutual-monitor`，典型 12 小时一轮）。**改探测逻辑要两台都改**，否则另一侧继续误报。
+- 收到失联告警，第一步是到"被指失联"的那台本机取证：公网 IP（`curl -s https://api.ipify.org`）、`uptime -s`、`ss -tlnp | grep PORT`。IP 未变 + 开机数周 + 端口在听 ⇒ 机器没挂，问题在探测端。
+- **探针必须说服务真正说的协议**：同一端口从明文 HTTP 换成 TLS 前端后，遗留的 `curl http://host:443/` 会被 RST，脚本每轮判失败 → 周期性假告警，而服务其实是好的。端口协议变更是"探针过时"，不是"机器失联"。
+- 协议感知探针写法（鉴权必需的服务，401/404 属健康，不是故障）：
+  `code=$(curl -sSk -m 8 -o /dev/null -w "%{http_code}" "https://$PEER_IP:PORT/"); case "$code" in 200|401|404) status=ok;; *) status=fail;; esac`
+- 阈值要和告警文案一致：脚本写"连续3次失败"却用 `-ge 1`，等于单次抖动就报警（cron 每 12 小时才跑一次，等于第一次失败就喊）。改阈值时把文案里的周期一起改对。
+- 改脚本前存 `.bak-<时间戳>`；改完**复跑一次**并确认状态文件回 0；再用 `hermes peer dm` 把结论告知对端（让它把"该端口是什么协议"写进自己记忆，别再据旧结论报失联）。
+- 对外可达性验证要分两侧做：本机测只能证明服务在听，**从对端机器再测一次**才算外部路径证据（对端若用自己那套 key/口令，401 是预期，说明链路通）。
 
 ## IP 迁移（2026-09-03，FASTNET 主动迁移）
 

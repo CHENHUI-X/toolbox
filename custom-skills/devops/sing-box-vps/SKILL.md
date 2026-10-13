@@ -51,9 +51,11 @@ After install, run `sb` to enter the management menu:
 The script generates locally:
 - **Sing-box** client config (SFA/SFI/SFW)
 - **Clash/Mihomo** compatible config
-- **Share links** for copying to client apps at `/etc/s-box/vl_reality.txt`, `/etc/s-box/vm_ws_tls.txt`, `/etc/s-box/hy2.txt`, `/etc/s-box/tuic5.txt`, `/etc/s-box/an.txt`
-- **Clash subscription** at `/etc/s-box/clmi.yaml`
-- **Combined subscription text** at `/etc/s-box/jhsub.txt`
+- **Share links** for copying to client apps: `vl_reality.txt`, `vm_ws_tls.txt`, `hy2.txt`, `tuic5.txt`, `an.txt`
+- **Clash subscription**: `clmi.yaml`
+- **Combined subscription text**: `jhsub.txt`
+
+**⚠️ Script-generated memo/share-link files go STALE on credential rotation** — they are one-time snapshots, not live config. After any rotation they still carry the OLD uuid/pbk/sid/passwords (and sometimes old IPs); importing one = mysteriously "timing out" nodes. **Truth = derive from `/etc/s-box/sb.json`** (REALITY public key via X25519 from `private_key` — never copy from old files; multiple generations of stale keys can coexist in old files). On the 2026-09-06 sweep, `jhsub.txt` / `jhdy.txt` / `vl_reality.txt` / `an.txt` / `hy2.txt` / `tuic5.txt` / `sb10.json` / `sb11.json` were archived to `/root/net-tune/legacy-backup/` on both machines. Only the distribution files served by subscription-server (`custom-sub.yaml` / `merged-sub.yaml` / `sub-links-plain.txt` / `sub-links-b64.txt` / `sub-singbox.json` / `sub-surfboard.ini`) are maintained.
 
 ## Pushing Subscriptions to GitHub
 
@@ -269,11 +271,35 @@ systemctl restart sing-box.service
 
 See `references/tuic-version-field.md` for detailed error transcript.
 
+### Vless REALITY "invalid connection" — two very different causes
+
+| Signal | Stale client keys (old pbk/sid) | Handshake target blocked (2026-09-06 case) |
+|---|---|---|
+| Error latency after client connects | instant reject | **~5m30s** (server stuck dialing the disguise site) |
+| Server → disguise site :443 | fine | TCP OK but **TLS handshake hangs forever** (openssl & python ssl both time out) |
+| Other TLS sites from the same box | fine | fine — only the disguise site is broken |
+
+Fix for the blocked-target case — two variants (details + diagnostic chain + rollback-A/B exoneration + CN-path UDP probe: `references/reality-handshake-target-blocked.md`):
+- **Symmetric** (needs client re-pull): point `tls.server_name` + `reality.handshake.server` at a site verified working from THAT box (itunes.apple.com worked when apple.com was dropped by a DDoS-protection transit), update sni in ALL distributed subscription files, restart sing-box.
+- **Asymmetric (preferred — zero client action)**: REALITY validates the client's SNI against `tls.server_name` but fetches the disguise cert from `reality.handshake.server` — these can DIFFER. Keep `server_name` on the old value (stale clients with old sni keep validating) and point only `handshake.server` at the working site. Users who won't re-pull their subscription connect immediately. Do NOT touch the subscription sni — it must always mirror `tls.server_name` (syncing it to `handshake.server` broke every re-pulled client — 2026-09-06 second incident, user furious; see references/reality-asymmetric-sni-rule.md). Verified 204/33ms + 100MB/s through the old-sni path.
+- **User says 'still timeout' → read server logs before asking them anything**: `journalctl -u sing-box | grep <user-IP>`. Arrivals + instant `invalid connection` + no proxy completions + empty subscription-server access log = client never re-pulled (their sni no longer matches) → switch to asymmetric fix server-side instead of waiting on the user.
+- **2026-09-19/20 QQG case — invalid despite server ≡ subscription params = CLIENT-side stale node**: when `sb.json` truth verbatim-matches the distributed subscription (pbk/sid/sni/uuid all identical) and the user STILL gets instant `REALITY: processed invalid` on every attempt (130+ rejects, 0 completions) across multiple rotating home exit IPs, the client is running a stale node (old deleted subscription entry like /nx4hspzb, a manually-added old node, or cached params). Verify server health first with the 5-protocol end-to-end loopback test (`references/protocol-benchmark-same-host.md`) — if all 204, touch NOTHING server-side; the fix is client-side: delete ALL old Stash subscriptions, keep only the live URL, force update + airplane-mode toggle. User self-check: node detail page public-key/short-id vs server truth (2-second confirmation). Rule out rotation theories via key mtimes (`ls -la /etc/s-box/*.key`). Details: `references/reality-client-stale-params.md`
+- **User broadband exit IP rotates every few days** (218.12.29.95→218.12.27.55→123.124.194.215→124.126.141.113→61.148.244.244 in ~5 days, all same home broadband) — never grep logs for ONE remembered user IP: got a false "user hasn't connected for hours" that way. Enumerate all sources: `journalctl -u sing-box --no-pager | grep 'connection from' | grep -oE 'from [0-9.]+' | sort | uniq -c | sort -rn`. Per-user success counting also has a trap: `grep <ip> | grep 'connection to'` reads 0 even while traffic flows, because proxy-completion (`to`) lines carry NO client IP — correlate via the `[reqid]` bracket token instead.
+
 ## Server Prep & Cleanup
 
 When setting up sing-box on a VPS that also runs Hermes Agent, strip unnecessary services to keep memory under 1GB. Common cloud VPS bloat includes BT Panel, Docker, Snapd, and Google Cloud Ops Agent.
 
 **Use the [linux-server-audit](../linux-server-audit/) skill** for the complete server audit, cleanup checklist, cache cleanup, service masking, dpkg recovery, and kernel optimization. The notes below cover only sing-box-specific concerns.
+
+## Direct optimization workflow (when user rejects more experiments)
+
+- Stop parameter sweeps and speculative A/B loops. Choose the final configuration from existing verified evidence and known-supported settings; a post-change syntax/service/subscription check is verification, not another tuning experiment.
+- Be exact about evidence: identify which host/path was measured, and never claim all nodes or both servers are optimized from one client-path result.
+- For dual-VPS work, inspect and back up each host independently; apply only to hosts whose management path is actually available, and verify each separately. A reverse-forward on port 9902 is the A2A HTTP API, not SSH; use the configured peer workflow for remote agent work. If remote administration is unavailable, distinguish that from proxy availability and report the unmodified scope plainly.
+- If that access network has verified UDP QoS, make the default auto-selection prefer reliable TCP transports while keeping HY2/TUIC available in the manual group. Do not remove nodes or other user-visible entries without explicit deletion permission.
+- Make the smallest text-targeted YAML edit; avoid PyYAML round-trips on distribution files with mirrored provider URLs. Back up first, parse-validate, then fetch the live subscription and confirm the expected groups/nodes/providers and HTTP status.
+- Preserve a one-step rollback backup and report changed scope, what was verified, and any inaccessible host. Do not call the whole deployment "optimized" while a named host remains untouched or unverified.
 
 ## Kernel Optimization for Low-Memory (≤1GB) VPS
 
@@ -285,6 +311,8 @@ Example before/after metrics from a real deployment:
 | Available memory | ~286MB | ~440MB |
 | Disk usage (29GB) | 8.5G | 5.3G |
 | Service restarts (sing-box) | 59× loop | stable |
+
+吞吐/延迟类 TCP 优化（bbr+fq、32MB 缓冲——区别于本节的省内存调优）见 `references/tcp-boost-four-pack.md`。**内核调优必须先获用户点头再动**（2026-09-06 全撤前科）。
 
 ## Telegram WARP 路由（GCP 网络优化）
 
@@ -493,27 +521,24 @@ https://域名/nx4hspzb  # 如果保留了路径保护
 
 **给 Parker 的命令必须单行** — 多行/反斜杠续行会被他的终端自动执行（用户原话"一行给我 不要换行 不然自动执行了 以后记住"）。所有发给用户的 shell/PowerShell 命令写成一行。
 
+**双机语境先确认主语** — 用户问"这个 IP 在哪/为啥超时"时先分清说的是 QQG 还是 GCP（报过错一次：用户问 QQG 的 IP，整篇答了 GCP 归属，被骂）。报 IP 归属时明确标注机器名。
+
+**订阅 URL 以 subscription-server.py 的 PATH_MAP 为准，交付前必须 curl 实测 200** — 勿凭记忆报路径（9-19 报了不存在的 /vycqe8gr 实际 404；QQG 现役入口 `/merged9k2m` → merged-sub.yaml 十节点 GCP5+QQG5；custom-sub.yaml 已删、/nx4hspzb 路由 404）。
+
+**"啥问题/怎么了"类问句先对齐所指** — 语境指刚发生的事故时直接答结论（一两句），不要开启新一轮排查（9-19 被打断纠正："我说之前啥问题"）。
+
 **⚠️ Telegram 会打码 IP 字符串** — 发含 `0.0.0.0/0` 的命令，Telegram 自动替换成 `[IP]/0`，用户复制过去就是错的。规避：gcloud 命令省略 `--source-ranges`（默认就是 0.0.0.0/0），或让用户用 Cloud Shell/网页控制台。
 
 **PowerShell 逗号是数组分隔符** — `--allow "udp:65083,udp:53900"` 必须加引号，否则 gcloud 报 `received [udp:65083 udp:53900]`。
 
-## 原始订阅交付 + 自建转换（现行主模式）
+### 用户喊停/回滚：最小交付节奏
 
-用户以「节点给你，规则我自己套」为主。交付顺序：给 `/convert` 成品链接（等价转换站产物、全协议不丢），或 raw 链接让他自己转——**不要主动再替用户配规则**。
+用户中途打断（如转圈等太久）或连说"算了"时，通常不是要新方案，而是要**回到改动前的状态**：
+- 立即停下当前方向，把已动的用户可见状态（订阅内容、下架节点）恢复原样，服务端内部配置的必要修复可保留但须逐条说明保留理由
+- 先恢复，再简短汇报"恢复到 X 状态"，等用户新指令——不要乘势推销替代方案
+- 订阅节点增删类变更须先问再做；服务端内部参数不属于用户可见面，可直接修
 
-- `sync-all-subs.py` 每次同步自动生成并 scp 推 QQG：`/etc/s-box/raw-nodes.yaml`（纯 proxies，无 rules/groups）+ `raw-nodes.txt`（分享链接 URI 的 base64 包，vmess ws path 带 `{uuid}-vm?ed=2048` 后缀）
-- 订阅服务路由（两台机器 80/443 双实例都要有）：`/raw`→raw-nodes.yaml，`/rawtxt`→raw-nodes.txt；用户 raw 链接不带端口即 80
-- **公共转换站会丢节点**：bianyuan.xyz 的公共后端不稳定，api.dler.io 等 subconverter 老内核不认识 vless-reality/tuic——yaml 和 URI 格式都丢（10 节点转出 6 个）。用户报「转换后 XX 协议端口没了」就是这个根因
-- **解法 = 自建 MetaCubeX/subconverter**（v0.9.2，内核 v0.9.1-mihomo，全协议识别）：`/opt/subconverter` + systemd `subconverter.service` 监听 25500 仅本机；订阅服务加 `/convert` 路由代理到 `http://127.0.0.1:25500/sub?target=clash&url=<raw>&config=<模板ini>`，默认模板 ACL4SSR_Online_Full_AdblockPlus.ini（用户点的去广告版：BanAD+BanProgramAD+EasyList/EasyListChina/EasyPrivacy，实测 33 组 9.6 万规则），`&config=` 可换模板。两台机器各装一份（QQG 的 sub-key 不同），交付 `http://aws.eosphor.dpdns.org/convert?key=<QQG key>`
-
-### Pitfalls
-- **每台机器跑两个订阅服务实例**：`subscription-server.service`（443）+ `subscription-server-80.service`（80）。改 PATH_MAP/脚本后**两个 unit 都要 restart**，只重启 443 会出现「本机 127.0.0.1 测试正常、公网异常」的精神分裂——不带 `:443` 的请求打到 80 端口旧进程
-- **两台机器 sub-key 不同**：QQG 与 GCP 的 `/etc/s-box/sub-key` 内容不同，别假设一把 key 通吃两个域名
-- 调试订阅路由时 curl 显式带 `:443` 或 `:80`，端口默认值会掩盖真实命中路径（GET 默认 80，HEAD/带证书的 https 才是 443）
-
-## 多机部署（第二台 VPS）
-
-在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信 / 全客户端多格式订阅交付的完整流程（脚本非交互安装、密钥同步字段表、Reality 公钥配对验证、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、精简订阅 vs 复写规则、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重、base64/sing-box/Surfboard 多格式生成、自建 subconverter 部署）：见 `references/multi-server-deployment.md`。
+在第二台 VPS 上部署 sing-box 并与已有主机统一密钥体系 / 双向 agent 通信的完整流程（脚本非交互安装、密钥同步字段表、SSH 反向隧道绕开云防火墙、peer 互备、检查钩子移植、实测清单）：见 `references/multi-server-deployment.md`。
 
 ## 凭据轮换（清理蹭流用户）
 
@@ -621,9 +646,9 @@ ss -tnp | grep -E "33741|2096|65083|53900|29624" | wc -l
 cat /proc/net/dev | grep ens4 | awk '{print "出站: " $10/1024/1024/1024 " GB"}'
 ```
 
-## 每日安全+流量自动报告（多机：各机自报，不再跨机取数）
+## 每日安全+流量自动报告
 
-每台机器各自跑 `scripts/traffic-report.py`（stdout 报告）并各自用本机 hermes cron 发 TG——用户已明确要求 QQG 流量不从 GCP 中转。报告格式两机一致（日/周/月/累计 + 端口/连接/系统状态）。
+`scripts/traffic-report.py` 生成中文安全+流量报告（含日/周/月统计 + 端口扫描 + 异常检测），输出到 stdout，适合 cron `no_agent=true` 定时推送。
 
 ### 报告内容
 
@@ -657,7 +682,7 @@ cat /proc/net/dev | grep ens4 | awk '{print "出站: " $10/1024/1024/1024 " GB"}
 | 模块 | 检测内容 |
 |------|---------|
 | 📡 流量统计 | 本日/本周/本月/累计 入站+出站（GB），跨日自动跟踪 |
-| 🔌 端口状态 | 对比已知端口白名单，报告异常端口和多余 UFW 规则 |
+| 🔌 端口状态 | TCP/UDP 分列检测，白名单每轮从 sb.json 现读，报告异常监听 |
 | 🔗 连接安全 | 代理端口连接数 + SOCKS5 外部连接检测 |
 | 🟢 系统状态 | 网关运行时间、Telegram 断连次数、内存占用 |
 
@@ -668,17 +693,17 @@ cat /proc/net/dev | grep ens4 | awk '{print "出站: " $10/1024/1024/1024 " GB"}
 - **周流量** = 周一重置起点
 - **月流量** = 每月1号重置起点
 
-### KNOWN_PORTS 白名单维护
+### 端口检测逻辑（现行实现）
 
-脚本内置白名单决定什么算"异常端口"。新增正常端口时同步编辑脚本内的 `KNOWN_PORTS` 字典（新装服务当天就加，如 SubConverter 25500——否则日报开始误报异常端口）。
+端口检测不用硬编码白名单——代理端口会迁移，硬编码列表必然过时后把新真端口全报成"异常"。现行规则（`/root/.hermes/scripts/traffic-report.py` 为权威实现，skill 存档副本已落后于该逻辑）：
 
-### 跨机取数模式（已废弃，仅存量参考）
-
-主机脚本曾通过 SSH 读对端 `/proc/net/dev` 合并报告 QQG 流量；用户已要求各机自报，QQG 段已从主机脚本删除。若用户再要「XX 的流量」，先确认口径：默认各机自报，用户说的可能是另一台机器的数据，不是"推送没到"。
+- **白名单每轮从 `/etc/s-box/sb.json` inbounds 现读**：hysteria2/tuic 归 UDP 入口，vless/vmess/anytls 归 TCP 入口（shadowsocks 双归）；SSH/订阅/Hermes 等基础端口保留小常量表
+- **判定监听只看 `ss -H -lntup` 的本地地址列**：解析绑定地址判回环/通配（含 v4-mapped IPv6），对端列的 `0.0.0.0:*` 与暴露与否无关
+- **UDP 用 `/proc/net/nf_conntrack` 统计真实流量**：只计 ASSURED 双向流，[UNREPLIED] 不算
+- **代理进程持有的临时 UDP socket（`ip_local_port_range` 内）不是入站监听**，豁免告警
+- 解析陷阱与 conntrack 细节见 `system-cron-setup` 技能 "Parsing network state in monitoring scripts" 一节
 
 ### 部署（Hermes cron，免 LLM 费用）
-
-GCP 主机（deliver=origin 发回当前聊天）：
 
 ```bash
 cronjob action=create \
@@ -689,15 +714,9 @@ cronjob action=create \
   deliver=origin
 ```
 
-第二台机器（如 QQG 有自己的 hermes + TG bot）：脚本 scp 到对端 `~/.hermes/scripts/traffic-report.py`（KNOWN_PORTS/proxy_ports/网卡名按目标机改），cron 在**对端本机**建：
-
-```bash
-hermes cron create "30 10 * * *" --name "QQG流量日报" \
-  --script traffic-report.py --no-agent --deliver telegram:<用户TG ID>
-```
-
 - `no_agent=true`: 只跑脚本 + 送 stdout，无 LLM 调用成本
-- **定时推送部署后必须验证真实送达**：对照 cron 日志确认触发，并核验发送结果。投递成功记录在**agent.log**（`cron.scheduler: delivered to telegram:<id>`），gateway.log 里没有 cron 投递行——别在错误的日志里白找
+- `deliver=origin`: 自动发到当前聊天
+- `schedule="30 10 * * *"`: 每天北京时间 10:30（系统已是 Asia/Shanghai）
 
 ### 文件位置
 
@@ -705,43 +724,60 @@ hermes cron create "30 10 * * *" --name "QQG流量日报" \
 
 ## 参考
 
+- `references/subscription-node-offline-restore.md` — 订阅节点下架/恢复四格式同步、从现成链接克隆新节点、proxy-groups 引用陷阱、用户喊停时的恢复节奏
 - `references/yonggekkk-sing-box-yg.md` — Full repo reference, file structure, video tutorials
 - `references/tuic-version-field.md` — Tuic version compatibility error transcript (sing-box 1.13.x)
 - `references/socks5-inbound-telegram.md` — Running sing-box as a SOCKS5 proxy for direct Telegram/app use, without external clients. **Includes WARP routing pattern for improving GCP→Telegram network stability.**
 - `references/ip-geolocation-correction.md` — IP 广播导致 GEO 库国家记录错误的自助纠错流程（MaxMind 程序化提交、实测物理位置、工单文案要素）
-- `references/multi-server-deployment.md` — 多机部署全流程：密钥统一、SSH 反向隧道、peer 互备、多格式订阅交付（Clash/base64/sing-box/Surfboard）、ACL4SSR 分流、第二台机器接 TG bot、Syncthing 双脑实时记忆互通、商家迁移 IP 应急、双机互备监控、WARP 出口坑、合并订阅去重
-- `references/subscription-field-truth.md` — sb.json→Stash 订阅逐字段真值映射（vmess path/tls 各机差异、自签证书 skip-cert-verify、QQG Reality sni 限制、TUIC 测试假阴性、全量矩阵测试模板、sync-all-subs.py 同步器）——改订阅前必读，杜绝硬编码
-- `references/cn-app-domain-routing.md` — 国内 App 分流覆盖：GEOIP 穿透机制（腾讯云 HK/SG CDN 骗过 GEOIP,CN）、App 流量走代理的诊断流程、五大社区规则库对照表（ACL4SSR/Sukka/blackmatrix7/v2fly/Loyalsoldier 的覆盖与坑）、RULE-SET 引用数≠规则条数的解释口径
+- `references/reality-asymmetric-sni-rule.md` — 不对称 REALITY 配置的 sni 一致性铁律：订阅 sni ≡ tls.server_name，混搭 = 重拉用户全挂（二次事故复盘）
+- `references/reality-handshake-target-blocked.md` — REALITY 握手挂起形态（~5m30s 超时 vs 即拒）：诊断链 + 对称/不对称修复 + 回滚 A/B 豁免
+- `references/reality-client-stale-params.md` — REALITY invalid 第三形态：服务端≡订阅参数仍全拒 = 客户端旧节点残留（旧订阅条目/手加节点/缓存），5协议端到端豁免法+用户2秒自检法；含出口IP轮换枚举与 reqid 关联计数两个日志陷阱
+- `references/china-line-quality-diagnosis.md` — 延迟低但速度慢：中国方向线路诊断（**多源测速铁律，单 CDN 限速会伪造"线路天花板"**、优化前后交替 A/B 对比法、出口 IP 中途变更陷阱、UDP 随用户网络自愈、协议速度排名口径）；9/15 补充：华为云镜像是最可靠基准源（腾讯 CDN 单源曾伪造"3MB 天花板"）
+- `references/subscription-outage-diagnosis-915.md` — 全超时补遗：REALITY 握手挂起第三形态、多机对机验证纪律、单源测速反面教训、用户沟通纪律
+- `references/protocol-benchmark-same-host.md` — 同机 5 协议对比实测方法论：hy2/anytls 出站字段是 password 不是 uuid、tuic 需 alpn h3、2082 的 vmess-ws 服务器端无 TLS、回环 reality 假失败、回环带宽测速无区分度；结论口径：日常 VLESS、丢包线路切 HY2/TUIC
+- `references/tcp-boost-four-pack.md` — TCP 吞吐四件套（bbr+fq/32MB 缓冲/防慢启动重置/防 MTU 黑洞）两机落地与回退脚本、tcp_no_metrics_save A/B 无差异实录、LimitNOFILE 陷阱
+- `references/qos-evasion-port-migration.md` — 国际链路 QoS 规避·全协议端口迁移实录（2026-09-21 QQG：vless→443、vmess→2053、hy2→8443/udp、tuic→8843/udp、anytls→8443/tcp；订阅服务 443→80 让位，QQG 订阅现役 80 口；tcp/udp 共端口规则、blanket sed 串端口陷阱、僵尸进程占口；含"套 CF/WARP 不提速"判定口径与迁移即强制重拉的代价）
+- `references/hy2-brutal-and-speed-tuning.md` — 服务端提速榨干实录（2026-09-24）：hy2 brutal 模式（up_mbps/down_mbps 服务端 + 订阅 "100 Mbps" 带单位格式，回环 6 倍）、tcp_fastopen 1→3、CF/WARP 不提速判定、双机同步时 peer 自报 vs 独立实拉验证、各机订阅 key 相互独立
+- `references/plain-node-subscription-conversion.md` — 纯节点订阅生成（用户拿去做订阅转换）：备份完整版→砍 groups/rules→mihomo wiki 字段对齐（"100 Mbps"/reduce-rtt/client-fingerprint）→「只有 vmess」= 老转换后端静默丢节点，换 clashmeta 目标并数节点数验收
+- `references/acl4ssr-self-conversion.md` — 不依赖第三方转换站的自建转换：解析 ACL4SSR 官方 MultiMode.ini（转换网站后端真身）→生成订阅、组精简归边映射（按官方组默认值，非全归代理）、FINAL→MATCH（Stash 不认 FINAL）、空地区组补 DIRECT 兜底、禁 per-app 专项规则（用户否决）、UDP 协议 Stash 测速超时=家宽 UDP QoS 的诊断口径
 
 ## 检查钩子补充坑（详见 sing-box-node-check 技能 + multi-server-deployment.md 第七节）
 
 - **scp 覆盖会冲掉远端已适配的检查脚本**——先在本地改好适配项再传，或传完重新 sed 并跑一遍确认
 - **用户区分"订阅"与"复写规则"**：第二台机器交付精简纯订阅（proxies+groups+rules），server 字段全域名零裸 IP，订阅服务 80/443 双端口（用户复制链接常不带 :443，只开 443 会误报超时）
 - **CF API Token 在 ~/.cloudflare_token.txt**（Edit zone DNS，作用域 eosphor.dpdns.org）：给新机器加子域名 A 记录用 API 搞定，不用麻烦用户
-- **⛔ 订阅字段零硬编码 + 修完跑全量矩阵（2026-09-07 用户暴怒铁律"为啥每次都犯错，不能一次性修好"）**：生成/修订阅时每个字段从服务端 sb.json 读真值（vmess path 带 -vm 后缀+early-data、vmess tls 各机不同 GCP有/QQG无、自签证书必带 skip-cert-verify、QQG Reality sni=itunes.apple.com）；交付前必须对全部节点×协议跑真实端到端测试（临时 client + curl 204），只测刚改的一项=把下一个坑留给用户。逐字段真值映射表见 `references/subscription-field-truth.md`；一键同步器 `/root/.hermes/scripts/sync-all-subs.py`（真源=两台 sb.json→三份订阅→验证），QQG 的 aws-sub.yaml 禁手改
-- **升级生成链路时同批清剿旧生成器**：重写/取代某个订阅生成脚本前，先全盘 grep 输出文件名（`grep -rn '<输出文件名>' /etc/cron.d/ /var/spool/cron/ ~/.hermes/scripts/`），把引用它的旧 cron 和旧脚本一并停用——旧生成器挂在 cron 上会按原周期用旧模板覆盖同一输出文件，本地订阅被静默打回旧版，只有本地 vs 远端内容对比才暴露得出来
 
-## 分流规则方案（现行：ACL4SSR_Online_Full 官方模板）
+## 分流规则方案（2026-09-02 实战定稿）
 
-用户点名要 ACL4SSR 风格的规则（订阅转换站同款）；现行真源 = 官方仓库 `ACL4SSR/ACL4SSR` 的 `ACL4SSR_Online_Full.ini` + Sukka 双源（`/Clash/non_ip/domestic.txt`、`/Clash/ip/china_ip.txt`）+ blackmatrix7 ChinaMax。升级或重建分流一律以这些社区权威源为底，唯一允许的适配 = 砍掉本环境没有节点的地区/流媒体分组，不自己发明精简结构。方案演进与坑：
+**现役结构（2026-09-25 起，用户点名精简）**：QQG merged-sub.yaml = 4 组（🚀节点选择/♻️自动选择/🚀手动切换/🎯全球直连）+ 35 条规则 + 32 个 jsdelivr 规则源。规则本体 = 官方 `ACL4SSR_Online_Full_MultiMode.ini`（订阅转换网站后端真身）原序原库，各 ruleset 组按**官方组默认值**归边到「代理/直连」两侧（哔哩哔哩/网易音乐/微软/苹果/谷歌FCM/游戏平台/国内媒体→直连侧；电报/AI/油管/奈飞/巴哈姆特/GFWlist→代理侧），末条 `MATCH,🚀 节点选择`（Stash 不认 FINAL）。31 组完整版备份 `merged-sub.yaml.bak-full-rules`。**禁 per-app 专项规则**（用户否决微信专项：官方库+GEOIP,CN 已覆盖，新 App 自动兜住）。细节与坑见 `references/acl4ssr-self-conversion.md`
 
-- **首选：rule-providers 引用社区权威碎片**（订阅小、客户端自动更新、Stash/CMFA 规则页可点开看明细）：
-  - ACL4SSR 碎片源 `https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/{name}.list`，behavior 用 `classical`
-  - Sukka 源必须用 `/Clash/` 预处理路径：`https://ruleset.skk.moe/Clash/non_ip/domestic.txt`（classical，国内域名全家桶含微信 CDN）；**不要用 `/List/` 通用路径**（Surge 格式，IP 库混 DOMAIN 行）。china_ip.txt IP 版已删——被 ChinaMax 内嵌 IP 段 + GEOIP,CN 双重覆盖，纯冗余且拖慢匹配
-  - blackmatrix7 ChinaMax：`https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/ChinaMax/ChinaMax.list`（classical，12.4 万行长尾聚合，interval 43200），盖住 Sukka/ACL4SSR 都缺的 App 长尾 CDN 域
-  - 标准顺序：LocalAreaNetwork→DIRECT、BanAD/BanProgramAD→REJECT、SukkaDomestic→ChinaMax→ChinaDomain 等直连碎片→DIRECT、国外碎片→节点组、GEOIP,CN→DIRECT、MATCH 兜底→节点组
+用户点名要 ACL4SSR 风格的规则（订阅转换站同款），方案演进与坑：
+
+- **首选：rule-providers 引用 ACL4SSR 碎片**（订阅小、客户端自动更新、Stash 规则页可点开看明细）：
+  - ⚠️ **碎片源必须用中国直连可达镜像**（2026-09-15 实锤）：`https://testingcf.jsdelivr.net/gh/ACL4SSR/ACL4SSR@master/Clash/{name}.list`。`raw.githubusercontent.com` 中国客户端直连拉不到 → 规则集全空 → 全部流量（含微信）落 MATCH 兜底走代理，且客户端每次更新都重试失败（用户观感"怎么每次都在拉规则"）。rule-provider 本有 `interval: 86400`+`path` 本地缓存（首次拉成功后 24h 内不碰网络），源不可达 = 永远没缓存。改完逐条 curl 验证 200。⚠️ 9-19 复发补课：镜像化必须 `grep -rn raw.githubusercontent /etc/s-box/` 枚举**所有**分发文件逐个替换——9-15 只改了 aws-sub.yaml，漏了 QQG merged-sub.yaml（用户 Stash 实际拉的文件）导致问题复发；且不限于 ACL4SSR，blackmatrix7 ChinaMax 等任何 raw 源都要换（`testingcf.jsdelivr.net/gh/<owner>/<repo>@master/<path>`）。当前状态：两台机全部分发文件已 jsdelivr 化、raw 残留 0
+  - behavior 用 `classical`
+  - **组默认值/顺序/结构与官方模板逐字一致，禁"顺手优化"**（2026-09-15 用户暴怒："你别乱改，人家漏网之鱼是啥你就是啥，你用人家的"）——曾把漏网之鱼默认改成 DIRECT 被打回。只改必须改的（碎片源镜像），其余照抄官方 `ACL4SSR_Online_Full.ini`（漏网之鱼默认=🚀节点选择、国内媒体/微软/苹果=DIRECT、广告/净化=REJECT），改完逐组核对默认项
+  - 微信走代理的排查顺序：先查规则集拉没拉成（客户端规则页空=源不可达），再查规则本身——机制链 weixin.qq.com→ChinaDomain(DOMAIN-SUFFIX,qq.com)→🎯全球直连（组默认 DIRECT）
+  - 标准顺序：LocalAreaNetwork→DIRECT、BanAD/BanProgramAD→REJECT、ChinaDomain/ChinaCompanyIp/ChinaIp/GoogleCN→DIRECT、国外碎片（ProxyGFWlist/ProxyLite/Telegram/Netflix）→节点组、MATCH 兜底→节点组
   - 分组加一个 `♻️ 自动选择`（url-test）挂在 select 组首位
-- **DNS 段基础配置（运行必需，非规则自造）**：fake-ip 模式（enhanced-mode: fake-ip + fake-ip-range/16 + fake-ip-filter 保护 NTP/局域网/连网检测）+ 国内外 DNS 分离 + fallback-filter geoip——缺 enhanced-mode 时 Clash Meta 行为随版本漂移
 - **内联大规则集（Loyalsoldier 15 万条）已废弃**：订阅 5MB+，且从 payload YAML 手转规则行极易出格式错误（`payload:,` 残留、引号拼接坏行），客户端直接解析失败
 - **用户对规则明细的关注点**：他要在 Stash 分流页看到"具体哪个域名/IP 走哪"——RULE-SET 远程引用满足此需求（客户端下载后可见），不要因此误改回内联
 - **RULE-SET 无裸 IP 例外**：节点 server 字段仍全用域名；订阅整体零裸 IP 是硬性要求
 - 节点命名规范：`🇺🇸 洛杉矶 | VLESS`（国旗+真实城市+协议）。⚠️ 商家宣传的机房国家可能是 IP 广播假象——用 TCP 握手延迟实测物理位置（俄勒冈→目标 36ms=美西，≠波兰的 180ms+），以实测为准命名
-- **订阅再生成必须携带完整分流块**：现行定稿 = 官方 **ACL4SSR_Online_Full.ini** 模板（拉 raw ini 照原序迁移），作为脚本常量随节点一起输出，禁止在“临时/精简版”里降级成几条兜底规则——再生成正是分流静默回退的时刻，客户端只显示“全部走代理”且无人报错
-- **⛔ 全协议交付，禁按客户端筛选/删除协议（2026-09-13 Parker 原话"你不用自主给我筛选协议，不能用不要删除"）**：订阅永远包含全部节点×协议，客户端支不支持是客户端的事（Parker 手机用 Clash Meta，全协议支持）；不要因为"某客户端不认 vless/hy2/tuic/anytls"就删节点或生成精简版
-- **⛔ 分流问题禁自造规则集，先查社区成熟方案（2026-09-13 Parker 原话"看看别人的，别自己瞎几把搞"）**：分流/IP穿透类问题先调研社区主流规则库再动手，采纳已验证的做法；自造 ASN 前缀 list（RIPEstat 拉腾讯全部段做直连）被 Parker 明确否定并已回滚
-- **⛔ 订阅 rules 零内联自造（2026-09-13 Parker 多次暴怒后定稿）**：订阅 rules 禁止手写内联域名/IP-CIDR 规则；官方模板外的一切增补（cncidr、sniffer、GEOIP,LAN、GEOSITE 大厂分类……）加了又删就是白折腾——**动手前先问 Parker**。现行定稿 = ACL4SSR_Online_Full 官方原文（砍地区组）+ Sukka domestic.txt（`/Clash/` 路径）+ blackmatrix7 ChinaMax（12.4 万行长尾聚合）+ fake-ip DNS 基础段，均社区权威源非自造。完整机制、诊断流程、规则库对照表见 `references/cn-app-domain-routing.md`
-- **rule-provider 源 URL 逐个 curl 实测 200 + 抽查内容格式再交付**：一个文件名拼错（LocalAreaNetwork.list 误作 Lan.list 即 404）该规则组在客户端永远加载不出且无任何报错，与"发链接先自测"同一条铁律；状态码 200 还不够——Sukka 的 `/List/` 通用路径（Surge 格式，IP 库里混 DOMAIN 签名行）和 `/Clash/` 预处理路径返回都是 200，不打开看内容发现不了。重写订阅生成脚本时从清单复制文件名，**禁止凭记忆重敲 URL**——现行源清单以 `/root/.hermes/scripts/sync-all-subs.py` 内置为准
-- **当前运行状态 vs 技能记录以 sync-all-subs.py 为准**：本节的规则源清单是历史定稿过程记录；现行订阅规则（21 条/19 providers，含 ChinaMax）以脚本内置为准。调试时先拉两份订阅 diff 一致性，再对照脚本看预期行为
+
+## Stash 覆写（Override）— 跨订阅复用规则（2026-09-30）
+
+用户说"给我一个规则，能让**其他订阅**也能使用（像之前那个台湾接点）"时 = 要 **Stash 覆写**：独立于订阅的 YAML 片段（含 `rules:`），套在任意订阅上都生效，覆写规则前置于订阅自带规则。**不要**为此去改 merged 订阅——覆写才是这个需求的正解形态。
+
+- 覆写文件 = 普通 Clash YAML 片段，`rules:` 列表即可（REJECT/DIRECT/组名均可）；放订阅服务器新路径（PATH_MAP 加一行），**改完必须重启 subscription-server（旧进程持旧映射，不重启新路径 404）**
+- 首个实例「微信加速」：屏蔽微信内置 httpDNS 治打开转圈（源 v2ex.com/t/1140060）→ `DOMAIN,dns.weixin.qq.com,REJECT` + `DOMAIN,dns.weixin.qq.com.cn,REJECT`；文件 `QQG /etc/s-box/sub-pages/wechat-dns-fix.stash`，路径 `/wechat-fix`
+- 用户导入：Stash → 配置 → 覆写 → ➕ 贴 URL → **对每个订阅手动开启覆写开关**（覆写不自动套用）；后续加规则 = 更新同一覆写文件，用户刷新即全订阅生效，零订阅改动
+- ⚠️ GCP 侧 subscription-server 是旧版：未知路径**兜底返回 merged 订阅（HTTP 200 假成功）**——验证新路径必须看内容不是状态码；GCP 修好前覆写 URL 只发 QQG 域名（aws.eosphor.dpdns.org 80 口实测 10ms）
+- 与「禁 per-app 专项规则」的关系：禁的是往订阅里塞 App 专项分流；**独立覆写**是用户主动要的形态（跨订阅、他自己控制开关）——两者不冲突，覆写形态的通用规则按配方交付
+
+部署命令与完整配方：`references/stash-override-recipe.md`
+
+**PATH_MAP 新增路径的完整落地顺序（2026-09-30 实操）**：① `subscription-server.py` 的 `PATH_MAP` dict 加一行 `'/路径': '/etc/s-box/文件'`；② 重启 systemd 服务——⚠️ 若 80 口被旧裸进程占用（ps 查 `subscription-server.py`，systemd restart 会 bind 失败进 activating 循环，先 kill 裸进程再 restart，systemd 5 秒后自动接管）；③ 验证 = curl 看内容正确而非只看 200（GCP 旧版脚本未知路径兜底 200 返回 merged，假成功）。改 PATH_MAP 后不重启 = 新路径 404（旧进程持旧映射）。
 
 ## GCP Ephemeral IP Change Handling
 
@@ -802,3 +838,6 @@ For DDNS domains (e.g., `*.dpdns.org`), update the A record through the provider
 - **Service respawning** — `systemctl stop + disable` is not always enough for services like `google-cloud-ops-agent`. Use `systemctl mask <service> --now`. See [linux-server-audit](../linux-server-audit/) for the full pattern.
 - **dpkg interruptions** — After bulk package removal, `dpkg --configure -a` may fail with `'ldconfig' not found in PATH'`. Fix: `export PATH=$PATH:/usr/sbin:/sbin` before running dpkg/apt commands. See [linux-server-audit](../linux-server-audit/) for the dpkg recovery workflow.
 - **Low-memory (≤1GB) kernel tuning** — After stripping bloat, also apply sysctl tweaks. See the **Kernel Optimization** section in [linux-server-audit](../linux-server-audit/).
+- **订阅服务端口让位陷阱（2026-09-21）**：把 443 让给 VLESS、订阅服务挪 80 时，① 旧手动实例仍占 80 → Errno 98 → systemd activating 循环，先 `ss -tlnp | grep :80` 找僵尸 pid kill 再 restart；② QQG 现役订阅入口自此为 **80 口 `/merged9k2m`**，交付前仍须 curl 实测 200
+- **rule-providers 批量改源/改端口必须 yaml 解析校验兜底**：sed 批量替换端口/URL 后必须 `yaml.safe_load` 逐节点打印 name+port 人工核对——本次 sed 把 VMESS/HY2 端口互串两处，全靠核对抓回（细节见 `references/qos-evasion-port-migration.md`）
+- **PyYAML 重写分发 yaml 后必须 grep raw 残留=0**：PyYAML 重写 merged-sub.yaml 会把手工 jsdelivr 化的 rule-provider URL 回退成 raw（GCP 侧 9-24 事故，peer 自报「未回退」不可信，跨机独立实拉抓出）——每次 yaml.dump 落盘分发文件后立即 `grep -c raw.githubusercontent` 验证

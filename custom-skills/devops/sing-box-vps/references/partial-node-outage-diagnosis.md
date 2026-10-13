@@ -84,3 +84,4 @@ openssl s_client -connect google.cloud.eosphor.dpdns.org:2096 \
 - 证书过期只影响校验证书的节点，Reality（伪装站）和不校验的节点照常——这是"部分通"的强信号
 - 改完端口/证书后必须重启 sing-box 才生效
 - acme.sh 有 crontab 自动续期（`crontab -l` 里 `0 0 * * * acme.sh --cron`），但本次 8/23 过期没续上——排查时如果自动续期失效，先手动 `--renew --force` 救急
+- **多机车队先按机器分桶**（用户报"节点超时"时）：看每台服务端日志里用户 IP 的到达情况——到达了但被拒 = 服务端/凭据问题；零到达 = 路径问题（中国→该线路丢 UDP/TLS）。跨机探测定性：peer dm 让另一台机发 UDP 垃圾包 + 本机 tcpdump 抓（抓到 = 线路不丢）。2026-09-06 实例：GCP 节点全通、QQG(DDoS 防护线路) 节点全挂——QQG 线路丢 UDP（hy2/tuic 中国侧 0 到达）且对 apple.com 丢 TLS（vless 服务端借不到伪装证书），见 `reality-handshake-target-blocked.md`

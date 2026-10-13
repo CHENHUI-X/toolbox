@@ -374,22 +374,33 @@ See `references/gateway-keepalive.md` for full implementation.
 
 ### Hermes Agent Update
 
-Update Hermes to the latest version:
+**Read the plan before touching anything:** `hermes update --plan` is read-only and shows install kind, running services per profile, and how each will be restarted. Confirm the gateway is the only affected service first.
 
+**Procedure (user-level systemd gateway):**
 ```bash
-hermes update
+hermes update --plan            # read-only: what changes, what restarts
+hermes update --backup --yes    # pass 1: backup → fetch → deps → TUI/web build
+hermes update --yes             # pass 2 — run if pass 1 ends with
+                                # "a source update is unfinished"; the first pass
+                                # hands off to the new updater mid-flight
+hermes pm status                # want outcome=ok and venv_rebuild ok=true
+hermes pm doctor                # runtime/dependency sanity
 ```
 
-This runs `git pull`, installs new Python dependencies, and updates the installed package.
+The update may pull tens of thousands of commits if the install is stale — expect several minutes and let `--backup` capture state first. Agent-browser and other default-tool installs inside the update can hit transient network timeouts; they retry automatically and do not fail the update. `hermes update --check` right after may still report "N commits behind" if main moved during the update — that's upstream drift, not a failed install.
+
+**Prefer the official updater over a bare `git pull`.** It handles orphaned/diverged local history (backs the old HEAD up to a ref before force-resetting), clears stale `__pycache__`, and rebuilds venv + TUI + web UI — a hand `git pull` skips all of that. The `--backup` zip lets you `hermes import` back if anything breaks.
+
+**Code-updated ≠ gateway-updated.** The running gateway keeps serving the OLD code from memory until restarted, and in-process restart is blocked (see below). After a successful update, have the user send `/restart` on Telegram or restart from an independent shell — then verify platform reconnection before reporting the update as done.
 
 **Post-update checklist:**
-1. ✅ Verify version: `cd /usr/local/lib/hermes-agent && git describe --tags`
+1. ✅ Verify version: `hermes --version` (a shallow clone may have no tags, so `git describe --tags` can return nothing)
 2. ✅ Check if `is_reconnect` bug re-appeared in QQ Bot adapter:
    ```bash
    grep "async def connect" /usr/local/lib/hermes-agent/gateway/platforms/qqbot/adapter.py
    # If it says "async def connect(self) -> bool" (missing is_reconnect param), re-apply the fix
    ```
-3. ✅ Restart gateway via system cron workaround (see below) — cannot restart from within gateway process
+3. ✅ Restart the gateway — cannot restart from within the gateway process; have the user send `/restart` or run it from an independent shell (one-shot system-cron entry also works, see below)
 4. ✅ Verify all platforms reconnected: `grep "✓.*connected" ~/.hermes/logs/gateway.log`
 5. ✅ Verify DeepSeek/provider config still works (reasoning_effort, api_mode)
 
@@ -638,7 +649,6 @@ hermes send --to weixin "MEDIA:/path/to/image.jpg"
 
 ### Pitfalls
 
-- **One iLink bot account = ONE gateway.** Two Hermes gateways sharing the same `WEIXIN_TOKEN`/`WEIXIN_ACCOUNT_ID` both long-poll `getupdates`, which is a single-cursor feed: inbound messages are stolen at random by whichever gateway polls first. Symptom: the same user is answered by one machine but gets a fresh "Hi~ I don't recognize you yet! Here's your pairing code" from the other on every message (each rejection mints a NEW code, so pending entries pile up). Diagnose by hashing the three `WEIXIN_*` values on both hosts and comparing; fix by disabling the platform on one side (`platforms.weixin.enabled: false` + remove the `WEIXIN_*` creds from that host's `.env`), NOT by approving the user on both (that produces duplicate/racing replies).
 - **iLink rate limits aggressive.** 30s+ cooldown per user on send failure (errcode -2). The rate-limit circuit breaker opens at 1 hit in 30s by default.
 - **Can't join ordinary WeChat groups.** iLink bot identity (`...@im.bot`) is designed for DMs, not group chat. Group events rarely arrive regardless of `WEIXIN_GROUP_POLICY`.
 - **QR code expires.** The login flow auto-refreshes up to 3 times. If all expire, rerun `hermes gateway setup`.
