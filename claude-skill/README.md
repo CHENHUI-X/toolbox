@@ -40,15 +40,62 @@ Restart Claude Code after restoring.
 
 ## Scheduled backup on macOS
 
-`com.chenhui.toolbox-claude-skill-backup.plist` runs this daily through
-launchd. Install it with:
+A launchd agent can run this daily. Save the block below as
+`~/Library/LaunchAgents/com.chenhui.toolbox-claude-skill-backup.plist`,
+replacing `__REPO__` with the absolute path of this clone and `__HOME__`
+with your home directory, then load it:
 
 ```bash
-cp launchd/com.chenhui.toolbox-claude-skill-backup.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.chenhui.toolbox-claude-skill-backup.plist
 ```
 
-Logs land in `~/Library/Logs/toolbox-claude-skill-backup.log`.
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.chenhui.toolbox-claude-skill-backup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO__/claude-skill/backup.sh</string>
+        <string>--push</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>23</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/toolbox-claude-skill-backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/toolbox-claude-skill-backup.log</string>
+</dict>
+</plist>
+```
+
+The explicit `PATH` matters: `rg` is not in launchd's default environment, and
+the script refuses to run when its sensitive-information scan cannot execute.
+
+To run it immediately instead of waiting for the schedule:
+
+```bash
+launchctl kickstart -p gui/$(id -u)/com.chenhui.toolbox-claude-skill-backup
+```
 
 ## Multiple devices
 
