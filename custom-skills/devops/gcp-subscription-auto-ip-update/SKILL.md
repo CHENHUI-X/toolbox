@@ -115,8 +115,12 @@ RestartSec=10
 
 - `/override` = **极简补充**：10 个自建节点（名字带「 追加」后缀，与主订阅节点名零重叠，否则 Stash 报“节点名重复”）+ 一个「自建节点」select 策略组（用户手动选） + 仅 PayPal 分流规则（`DOMAIN-SUFFIX,paypal.com` / `paypalobjects.com` / `DOMAIN-KEYWORD,paypal` → 自建节点）。**不要** `#!replace`（主力订阅自带规则必须原样保留），也**不要**塞 33 规则集 / 37 条分流 / 4 个主策略组——用户明确说用不到。
 - **覆写只有 `/override` 一条（唯一正确，用户 2026-10-14 明确）**：其他 `.stoverride` 文件（`/qqg-attach.stoverride`、`/qqg-rules.stoverride`、`/qqg-rules-pure.stoverride`、`/override-min`）**内容/设计都是错的，不要再发、不要再新做**。用户原话："覆写规则就要这一个，其他的全是错的"。
+- **443 卡死排查（2026-10-15 实例）**：症状 = 订阅链接 curl 超时（连 127.0.0.1:443 也超时），但 8080 正常、服务 status 显示 active。诊断看 `ss -tlnp | grep :443` 的 **Recv-Q**：非 0（如 6）即 accept 队列积压 = 前端卡死不接新连接。根因 = `sub-tls-proxy.py` 对**监听 socket** 做 `ctx.wrap_socket()`，TLS 握手落在 accept 主循环，一个只连不握手的扫描器就能堵死整端口。正确写法：监听 socket 不包 TLS，在 handler 的 `setup()` 里对已接受的连接 `wrap_socket`（握手在子线程）；Server 类设 `daemon_threads=True`、`request_queue_size=128`，handler 设 `timeout=10`。回归测试 = 挂 3 条只连不握手的连接，正常请求仍应 <100ms。
+- **入口契约（2026-10-16 收敛后，两机一致）**：只保留两个入口 —— `/merged9k2m`（merged-sub.yaml）+ `/override`（override-stash.yaml）；两机 `/etc/s-box/sub-key` 同一个值；其余路径（raw/rawtxt/sub-b64/sub-links/sub-sb/sub-surf/nx4hspzb/wechat-fix/convert）与根路径一律 **404**（FILE_PATH 兜底已删）。别再加新别名；内部脚本要拉订阅就直接走 `http://127.0.0.1:8080/merged9k2m?key=<sub-key>`。
+- **两机订阅必须“同一套”（2026-10-16 统一）**：同一个 sub-key（`/etc/s-box/sub-key`，GCP/QQG 一致）+ 同一份内容（`merged-sub.yaml`、`override-stash.yaml` 两机逐字节一致）。改内容时用 scp 推到对端并 `md5sum` 对账（两侧各拉一次比 md5），别只改一台。canonical 内容 = 含 Wechat 直连规则 + 广告规则 REJECT 的那份。
 - **改完覆写/订阅文件必须先用 YAML 严格校验再上线**：`/usr/bin/python3 -c "import yaml;d=yaml.safe_load(open('/etc/s-box/override-stash.yaml'));print(list(d.keys()))"`（系统 python3 在 `/usr/lib/python3/dist-packages` 下有 PyYAML；Hermes venv 外的 python3 没装）。2026-10-14 就是因为拼接时漏掉 `proxies:` 键头，第 5 行出现孤立 `- name:`，Stash 报"覆写格式不正确"。校验通过后还要 `curl -sS` 拉一次端点确认 200 且内容对。
-- 新需求先问清：覆写的职责只有「自建节点（后缀名）+ 一个手动选的「自建节点」策略组 + PayPal 追流」，不要自作主张加规则集/主策略组/`#!replace`。
+- 新需求先问清：覆写的职责只有「自建节点（后缀名）+ 一个手动选的「自建节点」策略组 + 指定分流」，不要自作主张加规则集/主策略组/`#!replace`。
+- **覆写现有分流（2026-10-16 定稿）**：只保留 **PayPal 3 条**（paypal.com / paypalobjects.com / 关键词 paypal）+ **Talkatone 33 条**（来源：github.com/carlleilzj/Talkatone_Rules 的 Clash 分流表 —— talkatone.com / talkamobile.com / tktn.at / tktn.be、各 talkatone 子域、tenor、20 个通话 IP 段，`no-resolve` 原样保留）+ **广告拦截 32 条 → REJECT**（同一个库的 Talkatone_Ads 表，放在 Talkatone 分流之前，顺序照 README：广告在分流上面）。Claude/Anthropic 那批已按用户要求撤回；用户原话：只覆盖“他自己相关的”，不相关的一律不走自建（npm/github/storage 永不加，除非用户点名）。
 - 改动前的背景：起因是主订阅与覆写节点名完全重叠（各自 10 个同名节点），Stash 报“节点名重复”→ 给覆写的节点统一加后缀解决。
 
 `sub-b64`（小火箭/v2rayN）、`sub-sb`（sing-box）、`sub-surf`（Surfboard）、`raw`/`rawtxt`、`qqg-*.stoverride` 只在明确要对应客户端或调试时才发。
