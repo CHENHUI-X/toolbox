@@ -8,6 +8,8 @@
 /d-skills/
 /datadream/
 /eval-sop/
+/fetch-online-trace/
+/fetch-search-agent-trace/
 /clash-sync-config/
 /synced/
 .git/
