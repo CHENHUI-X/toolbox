@@ -62,6 +62,18 @@ metadata:
 - `Host key verification failed` 表示主机身份校验阶段失败，不等于用户公钥认证失败。比对目标机 `/etc/ssh/ssh_host_*_key.pub` 的指纹与隧道端 `ssh-keyscan` 结果；确认一致后才写入 `known_hosts`。不要把 `StrictHostKeyChecking=no` 当最终修复。
 - 双向分别用 `BatchMode=yes`、指定私钥 SSH 到对端并执行 `hostname && whoami`，必须看到退出码 0。再独立检查 tunnel 状态 / NRestarts、原有转发端口和两侧 API `/health`；peer 消息成功不替代 SSH 测试，反之亦然。
 
+## 对端被重配：先判读，再决定动不动手
+
+- **公钥+密码全拒、主机指纹又变了 = 对端 sshd 被重配/重装，不是你的钥匙坏了**。判读顺序：`ssh-keyscan -t ed25519,rsa <host>` 取当前指纹 → 与 `ssh-keygen -F <host> | ssh-keygen -lf -` 对比 → 再试公钥与密码（`sshpass -p "$(cat <vault文件>)" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no root@<host>`）。三者都失败即停手，不连续重试。
+- **不要把新指纹直接写进 `known_hosts` 当“修好了”**，更不要常驻 `StrictHostKeyChecking=no`；指纹变化是安全信号，报告用户并等确认。
+- **有旁路就先用旁路取证**：对端的订阅/健康端口（80/443）仍在正常服务 ⇒ 机器活着、只是访问凭据被换；用 HTTP 端点比 md5 就能判断它跑到哪一版，不需要 shell。
+- **`hermes peer dm` 报 `Connection refused` 先分“掉了”还是“在抖”**：连打 `curl -s -m 5 http://<peer>:<port>/health`（间隔 3s，6~8 次）；前后不一致即为重启/抖动中，别在单次结果上定论。peer 凭据键名在 `.env` 里是 `HERMES_PEER_<PEER>_KEY`。
+- **同步被挡时就给一行命令，不要为打通去改对端**：
+  `curl -fsSk -o /etc/s-box/merged-sub.yaml "https://<主站>/merged9k2m?key=<key>" && printf %s <key> > /etc/s-box/sub-key && systemctl restart subscription-server-80 && md5sum /etc/s-box/merged-sub.yaml`
+  用户偏好单行可粘贴命令，并附期望 md5 便于验收。
+- **别人的部署一律不动**（用户明确要求）：对端换成了 nginx/面板/新服务时不重排、不卸载、不改证书，只做自己那条入口的最小插入，或等用户拍板。
+- 排障前先校验现场：`date`、`ss -tlnp`、`systemctl status`——跳天/跳会话的“上次结论”经常已过期（部署被换、端口换主、内容改版）。
+
 ## 两机文件同步（Syncthing）
 
 - 真正在跑的同步是 **Syncthing**，不是 `brain-sync.sh`——后者还在但**没挂 cron / 没 timer**，是废弃件；别依赖它、也别以为它在同步（怀疑同步没生效时先 `grep -r brain /etc/cron.d/`）。
@@ -126,7 +138,7 @@ metadata:
 
 另外：
 - **向用户报告状态前必须真验证**——曾只看 config.yaml 就声称“全部切过去了”，实际 fallback 到 deepseek 数天，被用户驳斥。config 写入 ≠ 实际生效；模型看 sessions 表，服务看端口+health，互通看 peer dm 闭环
-- **多格式订阅交付**：用户点破“stash/clash/冲浪板订阅格式都不一样，应分别创建”——单一 Clash YAML 不够。按客户端出格式：Clash YAML（Stash/Meta）+ base64 链接包（Shadowrocket/v2rayN）+ sing-box JSON（官方客户端，1.13 语法四坑：urltest interval 字符串/无 outbound DNS 规则/需 default_domain_resolver/reality 需 utls）+ Surfboard INI（仅 vmess，内核不支持新协议）。subconverter v0.9.0 不认新协议（10 节点只转出 1 个 vmess），已弃用。**分发入口给链接前必须逐条实测**：443 若已是 TLS 前端（如 `sub-tls-proxy` 挂 443、明文服务退到 `127.0.0.1:8080`），给用户的必须是 `https://`，旧的 `http://…:443` 客户端会被 RST 连不上；每台机器的 `sub-key` 独立（`/etc/s-box/sub-key`）别混用；逐个路径 `curl -sSk -o /dev/null -w "%{http_code}"` 应全 200，本机测完再从对端机器测一次。
+- **多格式订阅交付**：用户点破“stash/clash/冲浪板订阅格式都不一样，应分别创建”——单一 Clash YAML 不够。按客户端出格式：Clash YAML（Stash/Meta）+ base64 链接包（Shadowrocket/v2rayN）+ sing-box JSON（官方客户端，1.13 语法四坑：urltest interval 字符串/无 outbound DNS 规则/需 default_domain_resolver/reality 需 utls）+ Surfboard INI（仅 vmess，内核不支持新协议）。subconverter v0.9.0 不认新协议（10 节点只转出 1 个 vmess），已弃用。**分发入口给链接前必须逐条实测**：443 若已是 TLS 前端（如 `sub-tls-proxy` 挂 443、明文服务退到 `127.0.0.1:8080`），给用户的必须是 `https://`，旧的 `http://…:443` 客户端会被 RST 连不上；每台机器的 `sub-key` 独立（`/etc/s-box/sub-key`）别混用；逐个路径 `curl -sSk -o /dev/null -w "%{http_code}"` 应全 200，本机测完再从对端机器测一次。**200 不等于内容对**：还要比字节数与 md5（`curl -sSk "$URL" -o /tmp/x; md5sum /tmp/x <磁盘上的文件>`），不符就是中间层返回了别的东西。若分发层已换成 nginx 反代，**每个入口必须单独写 `location`**：漏掉的那个会落进 `location /`（面板/SPA）返回 200+HTML，客户端报“格式不对”；`ss -tlnp` 先确认 443 究竟是谁在听。
 
 ## 跨机存活监控："对端失联"告警先判真伪，别信单端口
 

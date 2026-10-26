@@ -44,6 +44,7 @@ Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号
 - 保号卡 requests mean giffgaff-**style** low-cost keep-alive cards (cheap annual hold, free SMS receive, zero/low monthly) — not necessarily giffgaff itself.
 - **溯源自证是第一反应，不是辩解**：用户质问"你哪看到的"/"链接不存在"时，先查自己的推送记录（session_search），找到原帖/原链后立刻自测可达性，再把**具体帖子内容直接贴给用户**——链接可能被 TG 吃掉、要登录或地区墙，依赖用户自己打开链接必翻车。同时检查推送缺陷（如只给了论坛首页链接没锚定到帖子）并当场改掉生成规则。
 - **对自己的历史输出零记忆≠没发生过**：用户引用几天前推送里的数字（如"$6.99/年"）时，先假设他说的是真的、去查记录，别开口就说"你记岔了"——错误在自己推送里时先认领再修正。
+- **服务器/VPS 类话题从指定源清单起手**：先 v2ex / nodeseek / hostloc / lowendtalk / linux.do / right.com.cn 等（清单与抓取法见 `references/server-sources.md`），取证顺序 **RSS/JSON → HTML 直抓 → 搜索引擎**；搜索后端报错或无结果不等于“没有信息”。报给用户必须带**日期+链接**，抓不到的站明说抓不到，不用别处二手信息冒充该站内容。
 
 ## References
 
@@ -52,3 +53,4 @@ Trigger: user asks for current deals/promos — cheap VPS, overseas SIM / 保号
 - `references/sim-card-alternatives.md` — giffgaff 2026 mass-ban case study + verified low-cost keep-alive SIM alternatives (HK/US/UK)
 - `references/saily-keepalive.md` — Saily eSIM 保号价格实况（年套餐仅 APP 内购、$X/年=码后价须注明条件）
 - `references/vps-by-region.md` — 分地区 VPS 选品笔记（UK/SG/TR/JP 已验证商家+价格锚点+Offers/WTB 区分）
+- `references/server-sources.md` — 服务器/VPS 信息**优先源清单**（用户指定的 10 个站）+ 每站可用抓取方式（RSS/JSON 直抓、恩山需 gb18030、nodeseek 要登录态）+ 首跑样例
