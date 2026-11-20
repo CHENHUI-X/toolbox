@@ -151,6 +151,17 @@ metadata:
 - 改脚本前存 `.bak-<时间戳>`；改完**复跑一次**并确认状态文件回 0；再用 `hermes peer dm` 把结论告知对端（让它把"该端口是什么协议"写进自己记忆，别再据旧结论报失联）。
 - 对外可达性验证要分两侧做：本机测只能证明服务在听，**从对端机器再测一次**才算外部路径证据（对端若用自己那套 key/口令，401 是预期，说明链路通）。
 
+### 「两台都还活着吗」的标准取证（逐层给证据，别只答一句“活着”）
+
+1. 本机：`hostname -I`、`uptime -p`、`systemctl is-active hermes-gateway syncthing nginx`、`ss -tlnp | grep -E '9900|9902'`。结论只用实测，不用记忆里的拓扑。
+2. 隧道：`systemctl status a2a-tunnel` 显示 `activating (auto-restart)` 即断链铁证（unit 里 `Restart=always` + `RestartSec=5` → 一天能刷上万次重试）。用 `journalctl -u a2a-tunnel --since '-14d' -o short-iso | grep -m1 'host key check failure'` 取**最早失败时刻**、`--since '-24h' | grep -c ...` 取规模——报告要带“从何时起断”，不是只报“现在不通”。
+3. Syncthing 是独立证据：`grep -oE '<apikey>[^<]+' /root/.local/state/syncthing/config.xml` 取 key，再 `curl -s -H "X-API-Key: $K" http://127.0.0.1:8384/rest/system/connections`，`connected=false` 即对端失联。别用 8384 是否公网可连来判断。
+4. 对端端口分层探：`timeout 6 bash -c 'echo > /dev/tcp/$IP/$PORT'` 逐个探 22 / api_server / 80 / 443。**22 通、但 api/80/443 全 timeout + 公钥被拒 + 主机指纹变了 = 机器活着、入口与凭据被换过**，报告里不能写成“机器宕机/失联”。
+5. 指纹一次性判读：`ssh-keyscan -T 5 -t ed25519,rsa $IP | ssh-keygen -lf -` 对比 `ssh-keygen -F $IP | ssh-keygen -lf -`；要跑 ssh 判认证阶段时用 `-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no`（只读不落盘），确认前不写 `known_hosts`。
+6. 探活别依赖 `ping`，统一 `/dev/tcp` 或 `curl -sSk -m 8 -o /dev/null -w '%{http_code}'`（本机未装 iputils）。
+7. **消息通道 ≠ 隧道**：隧道在重启循环、Syncthing `connected=false` 时，对端仍可能经别的路径把 A2A 消息送到本机，而 `ss -tn | grep <对端IP>` 一条连接都查不到。所以“收到对端消息”不能反证链路健康，“隧道断”也不能直接断言对端宕机——两侧各给一句带证据的结论。
+8. 1~5 步一键跑：`bash scripts/peer-liveness-probe.sh <对端IP> [api端口]`（输出本机服务、隧道断链起点、Syncthing 连接、对端端口与指纹）。
+
 ## IP 迁移（2026-09-03，FASTNET 主动迁移）
 
 - 商家迁 IP（195.72.189.146 → 50.114.172.17，DDoS 防护线路）导致整机失联（22/9901 全 timeout）——先区分"服务挂"vs"机器挂"：22 都不通 = 机器级
